@@ -9,8 +9,6 @@ It was developed with assistance from **ChatGPT**.
 🔇 Sound is **not supported**.  
 🎮 Only **DMG** and **MBC1** cartridges are supported.
 
----
-
 ![GoMeBoy thumbnail](thumbnail.png)
 
 ---
