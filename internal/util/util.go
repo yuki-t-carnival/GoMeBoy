@@ -7,3 +7,11 @@ func InsertSlice(arr []int, idx, val int) []int {
 	arr[idx] = val
 	return arr
 }
+
+func BoolToByte(b bool) byte {
+	if b {
+		return 1
+	} else {
+		return 0
+	}
+}

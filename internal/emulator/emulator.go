@@ -10,15 +10,19 @@ import (
 
 const (
 	CyclesPerFrame = 70221
-	RunMode        = 0
-	PauseMode      = 1
+
+	// Emulator mode ID
+	RunMode   = 0
+	PauseMode = 1
 )
 
 type Emulator struct {
 	CPU *cpu.CPU
 
-	IsPaused     bool
-	emuMode      int
+	IsPaused bool
+	emuMode  int
+	IsCGB    bool
+
 	isKeyP       bool
 	isKeyS       bool
 	isKeyEsc     bool
@@ -38,13 +42,28 @@ func NewEmulator(rom, sav []byte) *Emulator {
 		emuMode:  RunMode,
 		IsPaused: false,
 	}
+
+	cgbReg := e.CPU.Bus.Read(0x0143)
+	if cgbReg == 0xC0 || cgbReg == 0x80 {
+		e.IsCGB = true
+		e.CPU.Bus.PPU.IsCGB = true
+		e.CPU.Bus.PPU.SetOPRI(0xFE)
+	}
 	return e
 }
 
 // Run one Game Boy frame
 func (e *Emulator) RunFrame() int {
 	cycles := 0
-	for cycles < CyclesPerFrame {
+	var cpuSpeed int
+	isWspeed := e.CPU.Bus.PPU.IsCGB && e.CPU.Bus.IsWSpeed
+	if isWspeed {
+		cpuSpeed = 2
+	} else {
+		cpuSpeed = 1
+	}
+
+	for cycles < CyclesPerFrame*cpuSpeed {
 		e.updateEbitenKeys()
 		e.updateEmuMode()
 		if e.CPU.IsPanic || e.isKeyEsc { // for debug
@@ -53,11 +72,12 @@ func (e *Emulator) RunFrame() int {
 		} else if e.IsPaused {
 			return 0
 		}
-
-		c := e.CPU.Step()
-		e.CPU.Tracer.Record(e.CPU)
+		var c int
+		c = e.CPU.Step()
 		e.CPU.Bus.Timer.Step(c, e.CPU.IsStopped)
-		e.CPU.Bus.PPU.Step(c)
+		e.CPU.Bus.PPU.Step(c / cpuSpeed)
+		e.CPU.Bus.APU.Step(c / cpuSpeed)
+		e.CPU.Tracer.Record(e.CPU)
 		cycles += c
 	}
 	e.CPU.Bus.Joypad.Update()

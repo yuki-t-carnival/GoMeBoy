@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"gomeboy/internal/apu"
 	"gomeboy/internal/joypad"
 	"gomeboy/internal/memory"
 	"gomeboy/internal/ppu"
@@ -12,10 +13,15 @@ type Bus struct {
 	Timer  *timer.Timer
 	Joypad *joypad.Joypad
 	Memory *memory.Memory
+	APU    *apu.APU
 
 	// DMA Transfer
 	IsDMATransferInProgress bool
 	DMATransferIndex        int // 0 ~ 159
+
+	// CGB double speed mode (KEY1/SPD)
+	IsWSpeed      bool
+	IsSwitchArmed bool
 }
 
 // Memory Map Adress
@@ -117,6 +123,7 @@ func NewBus(m *memory.Memory) *Bus {
 
 	bus := &Bus{
 		PPU:    ppu.NewPPU(),
+		APU:    apu.NewAPU(),
 		Timer:  timer.NewTimer(),
 		Joypad: joypad.NewJoypad(),
 		Memory: m,
@@ -159,6 +166,18 @@ func (b *Bus) Read(addr uint16) byte {
 		return b.PPU.GetSCY()
 	case addr == SCX:
 		return b.PPU.GetSCX()
+	case addr == BCPS_BGPI: // CGB mode only
+		return b.PPU.GetBCPS()
+	case addr == BCPD_BGPD: // CGB mode only
+		return b.PPU.GetBCPD()
+	case addr == OCPS_OBPI: // CGB mode only
+		return b.PPU.GetOCPS()
+	case addr == OCPD_OBPD: // CGB mode only
+		return b.PPU.GetOCPD()
+	case addr == HDMA5: // CGB mode only
+		return b.PPU.GetHDMA5()
+	case addr == OPRI:
+		return b.PPU.GetOPRI() // CGB mode only
 
 	// Timer
 	case addr == DIV:
@@ -179,6 +198,56 @@ func (b *Bus) Read(addr uint16) byte {
 		return b.Memory.Read(addr) | 0xE0
 	case addr == IE:
 		return b.Memory.Read(addr) | 0xE0
+
+	// CPU
+	case addr == KEY1_SPD:
+		return b.GetKEY1()
+
+	// APU
+	case addr == NR10:
+		return b.APU.GetNR10()
+	case addr == NR11:
+		return b.APU.GetNR11()
+	case addr == NR12:
+		return b.APU.GetNR12()
+	case addr == NR13:
+		return b.APU.GetNR13()
+	case addr == NR14:
+		return b.APU.GetNR14()
+	case addr == NR21:
+		return b.APU.GetNR21()
+	case addr == NR22:
+		return b.APU.GetNR22()
+	case addr == NR23:
+		return b.APU.GetNR23()
+	case addr == NR24:
+		return b.APU.GetNR24()
+	case addr == NR30:
+		return b.APU.GetNR30()
+	case addr == NR31:
+		return b.APU.GetNR31()
+	case addr == NR32:
+		return b.APU.GetNR32()
+	case addr == NR33:
+		return b.APU.GetNR33()
+	case addr == NR34:
+		return b.APU.GetNR34()
+	case addr == NR41:
+		return b.APU.GetNR41()
+	case addr == NR42:
+		return b.APU.GetNR42()
+	case addr == NR43:
+		return b.APU.GetNR43()
+	case addr == NR44:
+		return b.APU.GetNR44()
+	case addr == NR50:
+		return b.APU.GetNR50()
+	case addr == NR51:
+		return b.APU.GetNR51()
+	case addr == NR52:
+		return b.APU.GetNR52()
+	case addr >= WaveRAMStart && addr < WaveRAMStart+16:
+		return b.APU.ReadWaveRAM(addr - WaveRAMStart)
 
 	// Memory
 	case addr == SVBK_WBK:
@@ -227,6 +296,27 @@ func (b *Bus) Write(addr uint16, val byte) {
 		b.PPU.SetWY(val)
 	case addr == WX:
 		b.PPU.SetWX(val)
+	case addr == BCPS_BGPI: // CGB mode only
+		b.PPU.SetBCPS(val)
+	case addr == BCPD_BGPD: // CGB mode only
+		b.PPU.SetBCPD(val)
+	case addr == OCPS_OBPI: // CGB mode only
+		b.PPU.SetOCPS(val)
+	case addr == OCPD_OBPD: // CGB mode only
+		b.PPU.SetOCPD(val)
+	case addr == HDMA1: // CGB mode only
+		b.PPU.SetHDMA1(val)
+	case addr == HDMA2: // CGB mode only
+		b.PPU.SetHDMA2(val)
+	case addr == HDMA3: // CGB mode only
+		b.PPU.SetHDMA3(val)
+	case addr == HDMA4: // CGB mode only
+		b.PPU.SetHDMA4(val)
+	case addr == HDMA5: // CGB mode only
+		b.PPU.SetHDMA5(val)
+		b.vdmaTransfer()
+	case addr == OPRI: // CGB mode only
+		b.PPU.SetOPRI(val)
 
 	// Timer
 	case addr == DIV:
@@ -248,6 +338,56 @@ func (b *Bus) Write(addr uint16, val byte) {
 	case addr == IE:
 		b.Memory.Write(IE, val&0x1F)
 
+	// CPU
+	case addr == KEY1_SPD:
+		b.SetKEY1(val)
+
+	// APU
+	case addr == NR10:
+		b.APU.SetNR10(val)
+	case addr == NR11:
+		b.APU.SetNR11(val)
+	case addr == NR12:
+		b.APU.SetNR12(val)
+	case addr == NR13:
+		b.APU.SetNR13(val)
+	case addr == NR14:
+		b.APU.SetNR14(val)
+	case addr == NR21:
+		b.APU.SetNR21(val)
+	case addr == NR22:
+		b.APU.SetNR22(val)
+	case addr == NR23:
+		b.APU.SetNR23(val)
+	case addr == NR24:
+		b.APU.SetNR24(val)
+	case addr == NR30:
+		b.APU.SetNR30(val)
+	case addr == NR31:
+		b.APU.SetNR31(val)
+	case addr == NR32:
+		b.APU.SetNR32(val)
+	case addr == NR33:
+		b.APU.SetNR33(val)
+	case addr == NR34:
+		b.APU.SetNR34(val)
+	case addr == NR41:
+		b.APU.SetNR41(val)
+	case addr == NR42:
+		b.APU.SetNR42(val)
+	case addr == NR43:
+		b.APU.SetNR43(val)
+	case addr == NR44:
+		b.APU.SetNR44(val)
+	case addr == NR50:
+		b.APU.SetNR50(val)
+	case addr == NR51:
+		b.APU.SetNR51(val)
+	case addr == NR52:
+		b.APU.SetNR52(val)
+	case addr >= WaveRAMStart && addr < WaveRAMStart+16:
+		b.APU.WriteWaveRAM(addr-WaveRAMStart, val)
+
 	// Memory
 	case addr == SVBK_WBK:
 		b.Memory.WriteWRAMBank(val)
@@ -258,6 +398,7 @@ func (b *Bus) Write(addr uint16, val byte) {
 
 // During DMA Transfer, CPU is stopped and 4 cycles elapse for each byte transferred
 func (b *Bus) DMATransfer() {
+	//fmt.Println("DMA Transfer")
 	if !(b.PPU.GetDMA() <= 0xDF) || !b.IsDMATransferInProgress {
 		panic("DMA transfer error")
 	}
@@ -271,4 +412,33 @@ func (b *Bus) DMATransfer() {
 		b.DMATransferIndex = 0
 		return
 	}
+}
+
+func (b *Bus) vdmaTransfer() {
+	//fmt.Println("VDMA Transfer")
+	src := b.PPU.VDMASrc
+	dst := b.PPU.VDMADst
+	len := b.PPU.VDMALen
+	for i := 0; i < len; i++ {
+		b.PPU.WriteVRAM(src+uint16(i), b.Read(dst+uint16(i)))
+	}
+	b.PPU.VDMALen = 0
+}
+
+// CGB mode only
+func (b *Bus) GetKEY1() byte {
+	v := byte(0x7E)
+	if b.IsWSpeed {
+		v |= 0x80
+	}
+	if b.IsSwitchArmed {
+		v |= 0x01
+	}
+	return v
+}
+
+// CGB mode only
+func (b *Bus) SetKEY1(val byte) {
+	b.IsWSpeed = val&0x80 != 0
+	b.IsSwitchArmed = val&0x01 != 0
 }

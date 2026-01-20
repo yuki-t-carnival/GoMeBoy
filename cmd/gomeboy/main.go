@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"gomeboy/config"
+	"gomeboy/internal/apu"
 	"gomeboy/internal/emulator"
+	"image"
 	"image/color"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	"path/filepath"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/examples/resources/fonts"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
@@ -21,37 +25,46 @@ var isShowDebug bool
 var cfg *config.Config
 
 type Game struct {
-	emu      *emulator.Emulator
-	img      []byte
-	palette  [4][4]byte
+	emu *emulator.Emulator
+	img *ebiten.Image
+	//img      []byte
 	font     *text.GoTextFaceSource
 	romTitle string
+	scale    int
+	audioCtx *audio.Context
+	player   *audio.Player
+	rc       io.ReadCloser
 }
 
 func NewGame(g *Game, rom, sav []byte) *Game {
 	font, _ := text.NewGoTextFaceSource(bytes.NewReader(fonts.PressStart2P_ttf))
 
-	imgSize := 160 * 144 * 4
+	debuggerWidth := 0
 	if isShowDebug {
-		imgSize *= 2
+		debuggerWidth = 160
 	}
 
 	g.emu = emulator.NewEmulator(rom, sav)
-	g.img = make([]byte, imgSize)
+	g.img = ebiten.NewImage(160+debuggerWidth, 144)
+	//g.img = make([]byte, imgSize)
 	g.font = font
-	g.palette = [4][4]byte{
-		{255, 255, 128, 255},
-		{160, 192, 64, 255},
-		{64, 128, 64, 255},
-		{0, 24, 0, 255},
-	}
+
 	// Pass Joypad-related settings in config.toml
 	g.emu.CPU.Bus.Joypad.SetIsGamepadEnabled(cfg.Gamepad.IsEnabled)
 	g.emu.CPU.Bus.Joypad.SetIsGamepadBind(cfg.Gamepad.Bind)
+
+	g.audioCtx = audio.NewContext(apu.SampleRate)
+	g.player, _ = g.audioCtx.NewPlayer(g.emu.CPU.Bus.APU.AudioStream)
+	//g.player.SetBufferSize(1024 * 4)
+	g.player.SetVolume(0.2)
+	g.player.Play()
+
 	return g
 }
 
 func (g *Game) Update() error {
+	if g.player == nil {
+	}
 	g.setWindowTitle()
 	if g.emu.RunFrame() == -1 {
 		return ebiten.Termination
@@ -60,8 +73,18 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	g.updateImgFromFB(g.emu.CPU.Bus.PPU.FB)
-	screen.WritePixels(g.img)
+
+	g.img = ebiten.NewImageFromImage(g.getViewportRGBAFormatted())
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(float64(g.scale), float64(g.scale))
+	/* shaderOp := &ebiten.DrawRectShaderOptions{}
+	shaderOp.Uniforms = map[string]interface{}{
+		"PixelSize": float32(160*2),
+	}
+	dotShader := ebiten.NewShader(g.getViewportRGBAFormatted())
+	screen.DrawRectShader(160*3*2, 144, dotShader, shaderOp) */
+	screen.DrawImage(g.img, op)
+	//screen.WritePixels(g.img)
 	if isShowDebug {
 		g.drawDebugMonitor(screen)
 	}
@@ -69,8 +92,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	// Internal Resolution (Stretch to fit window size while maintaining aspect ratio)
-	screenHeight := 144
-	screenWidth := 160
+	screenHeight := 144 * g.scale
+	screenWidth := 160 * g.scale
 	if isShowDebug {
 		screenWidth *= 2
 	}
@@ -83,9 +106,11 @@ func main() {
 	if cfg, err = config.Load("config.toml"); err != nil {
 		panic(err)
 	}
-	scale := cfg.Video.Scale
-	scale = max(scale, 0)
-	scale = min(scale, 4)
+	g := &Game{}
+
+	g.scale = cfg.Video.Scale
+	g.scale = max(g.scale, 0)
+	g.scale = min(g.scale, 4)
 	isShowDebug = cfg.Video.IsShowDebug
 
 	// Load .gb file
@@ -104,14 +129,12 @@ func main() {
 	sav, _ := os.ReadFile(savPath)
 
 	// Set window size
-	windowHeight := 144 * scale
-	windowWidth := 160 * scale
+	windowHeight := 144 * g.scale
+	windowWidth := 160 * g.scale
 	if isShowDebug {
 		windowWidth *= 2
 	}
 	ebiten.SetWindowSize(windowWidth, windowHeight)
-
-	g := &Game{}
 
 	// Get ROM title
 	s := string(rom[0x0134:0x0144])
@@ -125,9 +148,8 @@ func main() {
 		panic(err)
 	} else {
 		// When the emulator is closed, save ERAM(save) data
-		data := make([]byte, len(g.emu.CPU.Bus.Memory.ERAM))
-		copy(data[:], g.emu.CPU.Bus.Memory.ERAM[:])
-		os.WriteFile(savPath, data, 0644)
+		savData := g.emu.CPU.Bus.Memory.GetSaveData()
+		os.WriteFile(savPath, savData, 0644)
 	}
 }
 
@@ -142,10 +164,9 @@ func (g *Game) drawDebugMonitor(screen *ebiten.Image) {
 	strs = append(strs, top)
 	strs = append(strs, g.emu.CPU.Tracer.GetCPUInfo()...)
 	strs = append(strs, "")
-	strs = append(strs, "Cart: "+g.emu.CPU.Bus.Memory.CartTypeName)
-	strs = append(strs, "ROM: "+g.emu.CPU.Bus.Memory.ROMSizeName)
-	strs = append(strs, "RAM: "+g.emu.CPU.Bus.Memory.RAMSizeName)
-
+	strs = append(strs, g.emu.CPU.Bus.Memory.GetHeaderInfo()...)
+	strs = append(strs, "")
+	strs = append(strs, g.emu.CPU.Bus.APU.GetAPUInfo()...)
 	white := color.RGBA{255, 255, 255, 255}
 	red := color.RGBA{255, 0, 0, 255}
 	var cr = color.RGBA{}
@@ -155,26 +176,29 @@ func (g *Game) drawDebugMonitor(screen *ebiten.Image) {
 		} else {
 			cr = white
 		}
-		g.drawText(screen, s, 160, i*8, 8, cr)
+		g.drawText(screen, s, 160*g.scale, i*16, 16, cr)
 	}
 }
 
-// Also converts to RGBA
-func (g *Game) updateImgFromFB(fb []byte) {
-	srcBase := 0
-	dstBase := 0
+func (g *Game) getViewportRGBAFormatted() *image.RGBA {
+	idxScale := 1
+	if isShowDebug {
+		idxScale = 2
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 160*idxScale, 144))
+
+	base := 0
+	rgba := color.RGBA{}
 	for y := 0; y < 144; y++ {
-		srcBase = y * 160
-		dstBase = srcBase
-		if isShowDebug {
-			dstBase *= 2
-		}
+		base = y * 160
 		for x := 0; x < 160; x++ {
-			colorNum := fb[srcBase+x]
-			dst := (dstBase + x) * 4
-			copy(g.img[dst:dst+4], g.palette[colorNum][:])
+			rgba = g.emu.CPU.Bus.PPU.GetPixelsInRGBA(base + x)
+			/* dst := (base*idxScale + x) * 4
+			copy(g.img[dst:dst+4], rgba[:]) */
+			img.SetRGBA(x, y, rgba)
 		}
 	}
+	return img
 }
 
 // Use instead of ebiten.DebugPrint

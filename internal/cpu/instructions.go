@@ -25,6 +25,10 @@ func (c *CPU) opEI() { // FB
 func (c *CPU) opSTOP_n8() { // 10
 	_ = c.fetch()
 	//c.IsStopped = true // TODO: Implement the STOP
+	if c.Bus.IsSwitchArmed {
+		c.Bus.IsWSpeed = !c.Bus.IsWSpeed
+		c.Bus.IsSwitchArmed = false
+	}
 	c.cycles += 4
 }
 

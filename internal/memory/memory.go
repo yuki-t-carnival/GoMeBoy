@@ -1,117 +1,55 @@
 package memory
 
+import (
+	"fmt"
+	"gomeboy/internal/mbc"
+)
+
 type Memory struct {
-	rom  []byte          // =.gb data
-	ERAM [0x8000]byte    // =External RAM, SRAM
+	mbc  mbc.MBC
 	wram [8][0x1000]byte // DMG=1bank, CGB=8bank
 	hram [0x7F]byte
 	io   [0x80]byte
 	ie   byte
 
+	wramBank byte // only CGB mode
+
 	// Cartridge Header
-	cartTypeID   byte   // $0147
-	romSizeID    byte   // $0148
-	ramSizeID    byte   // $0149
-	CartTypeName string // Description of the above ID values
-	ROMSizeName  string
-	RAMSizeName  string
-
-	// MBC Registers
-	bankingMode byte
-	bankHigh    byte
-	romBankLow  byte
-	isRAMEnable bool
-
-	wramBank     byte // only CGB mode
-	romBankCount byte
-
-	// For debug
-	//ROMBankHistory []byte
-	//RAMBankHistory []byte
+	mbcType       int
+	TotalROMBanks int
+	TotalRAMBanks int
 }
 
 func NewMemory(rom, sav []byte) *Memory {
-	mem := &Memory{
-		rom:        rom,
-		romBankLow: 1,
+	mem := &Memory{}
+	mbc.InitLists()
+	mem.mbcType = mbc.MBCTypeList[rom[0x0147]]
+	mem.TotalROMBanks = mbc.TotalROMBanksList[rom[0x0148]]
+	mem.TotalRAMBanks = mbc.TotalRAMBanksList[rom[0x0149]]
+	switch mem.mbcType {
+	case 0:
+		mem.mbc = mbc.NewMBC0(rom, sav, mem.TotalRAMBanks) // = No MBC
+	case 1:
+		mem.mbc = mbc.NewMBC1(rom, sav, mem.TotalRAMBanks)
+	case 5:
+		mem.mbc = mbc.NewMBC5(rom, sav, mem.TotalRAMBanks)
+	default:
+		panic("Unsupported MBC type")
 	}
-	copy(mem.ERAM[:], sav)
-	mem.cartTypeID = mem.rom[0x0147]
-	mem.CartTypeName = cartTypeNames[mem.cartTypeID]
-	mem.romSizeID = mem.rom[0x0148]
-	mem.ROMSizeName = romSizeNames[mem.romSizeID]
-	mem.ramSizeID = mem.rom[0x0149]
-	mem.RAMSizeName = ramSizeNames[mem.ramSizeID]
-	mem.romBankCount = byte(cap(mem.rom) / 0x4000)
 	return mem
-}
-
-var cartTypeNames = [256]string{
-	0x00: "ROM ONLY",
-	0x01: "MBC1",
-	0x02: "MBC1+RAM",
-	0x03: "MBC1+RAM+BT",
-	0x05: "MBC2",
-	0x06: "MBC2+BT",
-	0x08: "ROM+RAM 11",
-	0x09: "ROM+RAM+BT 11",
-	0x0B: "MMM01",
-	0x0C: "MMM01+RAM",
-	0x0D: "MMM01+RAM+BT",
-	0x0F: "MBC3+T+BT",
-	0x10: "MBC3+T+RAM+BT 12",
-	0x11: "MBC3",
-	0x12: "MBC3+RAM 12",
-	0x13: "MBC3+RAM+BT 12",
-	0x19: "MBC5",
-	0x1A: "MBC5+RAM",
-	0x1B: "MBC5+RAM+BT",
-	0x1C: "MBC5+RBL",
-	0x1D: "MBC5+RBL+RAM",
-	0x1E: "MBC5+RBL+RAM+BT",
-	0x20: "MBC6",
-	0x22: "MBC7+SEN+RBL+RAM+BT",
-	0xFC: "POCKET CAMERA",
-	0xFD: "BANDAI TAMA5",
-	0xFE: "HuC3",
-	0xFF: "HuC1+RAM+BT",
-}
-
-var romSizeNames = [0x55]string{
-	0x00: "32KiB(2banks,noBanking)",
-	0x01: "64KiB(4banks)",
-	0x02: "128KiB(8banks)",
-	0x03: "256KiB(16banks)",
-	0x04: "512KiB(32banks)",
-	0x05: "1MiB(64banks)",
-	0x06: "2MiB(128banks)",
-	0x07: "4MiB(256banks)",
-	0x08: "8MiB(512banks)",
-	0x52: "1.1MiB(72banks)",
-	0x53: "1.2MiB(80banks)",
-	0x54: "1.5MiB(96banks)",
-}
-
-var ramSizeNames = [6]string{
-	0x00: "0(No RAM)",
-	0x01: "-(Unused)",
-	0x02: "8KiB(1bank)",
-	0x03: "32KiB(4banks/8KiB)",
-	0x04: "128KiB(16banks/8KiB)",
-	0x05: "64KiB(8banks/8KiB)",
 }
 
 // Called from Bus.Read()
 func (m *Memory) Read(addr uint16) byte {
 	switch {
 	case addr < 0x8000:
-		return m.readROM(addr)
+		return m.mbc.ReadROM(addr)
 
 	case addr >= 0x8000 && addr < 0xA000:
 		return 0xFF // Access VRAM via Bus.Read()
 
 	case addr >= 0xA000 && addr < 0xC000:
-		return m.readERAM(addr)
+		return m.mbc.ReadERAM(addr)
 
 	case addr >= 0xC000 && addr < 0xD000:
 		return m.wram[0][addr-0xC000]
@@ -146,13 +84,13 @@ func (m *Memory) Read(addr uint16) byte {
 func (m *Memory) Write(addr uint16, val byte) {
 	switch {
 	case addr < 0x8000:
-		m.writeROMArea(addr, val) // Consider banking
+		m.mbc.WriteROM(addr, val) // Consider banking
 
 	case addr >= 0x8000 && addr < 0xA000:
 		return // Access VRAM via Bus.Write()
 
 	case addr >= 0xA000 && addr < 0xC000:
-		m.writeERAMArea(addr, val)
+		m.mbc.WriteERAM(addr, val)
 
 	case addr >= 0xC000 && addr < 0xD000:
 		m.wram[0][addr-0xC000] = val
@@ -188,86 +126,38 @@ func (m *Memory) WriteWRAMBank(val byte) {
 	m.wramBank = val & 0x07
 }
 
-// Read from ROM in the current bank
-// (Only compatible with MBC1)
-func (m *Memory) readROM(addr uint16) byte {
-	switch {
-	case addr < 0x4000: // ROM Bank $20/$40/$60
-		bank := byte(0)
-		if m.bankingMode == 1 {
-			bank = m.bankHigh << 5
-		}
-		if bank >= m.romBankCount {
-			bank %= m.romBankCount
-		}
-		return m.rom[0x4000*uint32(bank)+uint32(addr)]
-
-	case addr >= 0x4000 && addr < 0x8000: // ROM Bank 01-7F
-		bank := (m.bankHigh << 5) | m.romBankLow
-		if bank >= m.romBankCount {
-			bank %= m.romBankCount
-		}
-		return m.rom[0x4000*uint32(bank)+uint32(addr-0x4000)]
+func (m *Memory) GetHeaderInfo() []string {
+	var mbc string
+	switch m.mbcType {
+	case -1:
+		mbc = "Unsupported"
+	case 0:
+		mbc = "No MBC"
 	default:
-		return 0xFF
+		mbc = fmt.Sprint(m.mbcType)
 	}
+
+	var rom string
+	if m.TotalROMBanks == -1 {
+		rom = "Unsupported"
+	} else {
+		rom = fmt.Sprintf("%d banks", m.TotalROMBanks)
+	}
+
+	var ram string
+	if m.TotalRAMBanks == -1 {
+		ram = "Unsupported"
+	} else {
+		ram = fmt.Sprintf("%d banks", m.TotalRAMBanks)
+	}
+
+	var strs []string
+	strs = append(strs, "MBC:"+mbc)
+	strs = append(strs, "ROM:"+rom)
+	strs = append(strs, "RAM:"+ram)
+	return strs
 }
 
-// Read from ERAM in the current bank
-// (Only compatible with MBC1)
-func (m *Memory) readERAM(addr uint16) byte {
-	switch {
-	case addr >= 0xA000 && addr < 0xC000:
-		if !m.isRAMEnable {
-			return 0xFF
-		}
-		bank := byte(0)
-		if m.bankingMode == 1 {
-			bank = m.bankHigh
-		}
-		return m.ERAM[uint16(bank)*0x2000+addr-0xA000]
-	default:
-		return 0xFF
-	}
-}
-
-// Write to ROM area
-// (it is not a write to the ROM, but a write to the MBC register)
-// (Only compatible with MBC1)
-func (m *Memory) writeROMArea(addr uint16, val byte) {
-	switch {
-	case addr < 0x2000: // RAM Enable
-		m.isRAMEnable = val&0x0F == 0x0A
-
-	// ROM Bank Number
-	case addr >= 0x2000 && addr < 0x4000:
-		m.romBankLow = val & 0x1F
-		if m.romBankLow == 0 {
-			m.romBankLow = 1
-		}
-
-	// RAM Bank Number or Upper Bits of ROM Bank Number
-	case addr >= 0x4000 && addr < 0x6000:
-		m.bankHigh = val & 0x03
-
-	// Banking Mode Select
-	case addr >= 0x6000 && addr < 0x8000:
-		m.bankingMode = val & 0x01
-	}
-}
-
-// Write to ERAM area
-// (Only compatible with MBC1)
-func (m *Memory) writeERAMArea(addr uint16, val byte) {
-	switch {
-	case addr >= 0xA000 && addr < 0xC000:
-		if !m.isRAMEnable {
-			return
-		}
-		bank := byte(0)
-		if m.bankingMode == 1 {
-			bank = m.bankHigh
-		}
-		m.ERAM[uint16(bank)*0x2000+addr-0xA000] = val
-	}
+func (m *Memory) GetSaveData() []byte {
+	return m.mbc.GetSaveData()
 }

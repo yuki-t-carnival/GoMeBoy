@@ -1,45 +1,71 @@
 package ppu
 
-import "gomeboy/internal/util"
+import (
+	"gomeboy/internal/util"
+	"image/color"
+	"math"
+)
 
 const (
-	// ID for BG/Window common functions
-	BG     = 0
-	Window = 1
+	// DMG palette
+	DMG_BGP  = 0
+	DMG_OBP0 = 1
+	DMG_OBP1 = 2
 
-	// Kinds of palette
-	BGP  = 0
-	OBP0 = 1
-	OBP1 = 2
+	// CGB color palette
+	CGB_BGP0 = 3
+	CGB_OBP0 = 11
 )
+
+var xFlipLUT [256]byte
+var expand5bitLUT [32]byte
 
 type PPU struct {
 	// LCD
 	vp [160 * 144]Pixel // Color Num
-	FB []byte           // After Resolve palette
 
 	// PPU Memory
 	vram [2][0x2000]byte
 	oam  [160]byte
 
-	// I/O Registers
-	bank     byte
-	dma      byte
-	lcdcBits [8]uint8
-	stat     byte
-	ly       byte
-	lyc      byte
-	obp0     byte
-	obp1     byte
-	bgp      byte
-	wy       byte
-	wx       byte
-	scy      byte
-	scx      byte
+	// I/O Registers (direct)
+	bank byte
+	dma  byte
+	stat byte
+	ly   byte
+	lyc  byte
+	obp0 byte
+	obp1 byte
+	bgp  byte
+	wy   byte
+	wx   byte
+	scy  byte
+	scx  byte
+	bcps byte // CGB mode only
+	bcpd byte // CGB mode only
+	ocps byte // CGB mode only
+	ocpd byte // CGB mode only
 
-	// Prev PPU Registers
-	prevLCDC5 uint8
-	prevLY    byte
+	// I/O Resisters (each split bit/option)
+	// OPRI bit
+	IsCGBstylePri bool // CGB mode only
+	// LCDC bits
+	isBGWEnabledOrPriority    bool // bit0 (different meaning in CGB mode)
+	isOBJEnabled              bool // bit1
+	isOBJBigSize              bool // bit2
+	isSetBGTileMapAreaBit     bool // bit3
+	isSetBGWTileDataAreaBit   bool // bit4
+	isWindowEnabled           bool // bit5
+	isSetWindowTileMapAreaBit bool // bit6
+	isLCDEnabled              bool // bit7
+	// BGP/OBP bits
+	bgpData  [4]uint8 // Non-CGB mode only
+	obp0Data [4]uint8 // Non-CGB mode only
+	obp1Data [4]uint8 // Non-CGB mode only
+
+	// Prev Registers
+	isPrevWindowEnabled bool
+	prevLY              byte
 
 	// PPU Internal Counters
 	wly    int
@@ -52,25 +78,31 @@ type PPU struct {
 	isLockModeInt bool
 
 	// Object
-	objList  []int
-	xFlipLUT [256]byte
+	objList []int
 
-	// Palette
-	plBGP  [4]uint8
-	plOBP0 [4]uint8
-	plOBP1 [4]uint8
+	bgpRAM       [64]byte // CGB mode only
+	obpRAM       [64]byte // CGB mode only
+	dmgColorRGBA [4]color.RGBA
 
 	hasTransferRq bool
+	IsCGB         bool
+
+	// HDMA
+	VDMASrc uint16 // CGB mode only
+	VDMALen int    // CGB mode only
+	VDMADst uint16 // CGB mode only
 }
 
 type Pixel struct {
-	num byte  // 0 ~ 3
-	pl  uint8 // BGP, PlaletteOBP0, OBP1
+	num      byte // 0 ~ 3
+	pl       int  // BGP, PlaletteOBP0, OBP1
+	isBGWPri bool //
 }
 
 func NewPPU() *PPU {
+	createXFlipLUT()
+	createExpand5bitLUT()
 	p := &PPU{
-		FB:   make([]byte, 160*144),
 		stat: 0x85,
 		ly:   0x00,
 		lyc:  0x00,
@@ -83,12 +115,17 @@ func NewPPU() *PPU {
 	p.SetBGP(0xFC)
 	p.SetOBP0(0xFF)
 	p.SetOBP1(0xFF)
-	p.createXFlipLUT()
+	p.dmgColorRGBA = [4]color.RGBA{
+		{255, 255, 128, 255},
+		{160, 192, 64, 255},
+		{64, 128, 64, 255},
+		{0, 24, 0, 255},
+	}
 	return p
 }
 
 // For Object
-func (p *PPU) createXFlipLUT() {
+func createXFlipLUT() {
 	result := byte(0)
 	for i := 0; i < 256; i++ {
 		result = 0
@@ -97,13 +134,31 @@ func (p *PPU) createXFlipLUT() {
 				result |= (1 << (7 - b))
 			}
 		}
-		p.xFlipLUT[i] = result
+		xFlipLUT[i] = result
+	}
+}
+
+func createExpand5bitLUT() {
+	maxI := 31.0
+	maxO := 255.0
+
+	for i := 0; i < 32; i++ {
+		fi := float64(i)
+
+		vivid := fi * (maxO / maxI)
+
+		maxJ := maxO * maxO
+		j := fi * (maxJ / maxI)
+		pastel := math.Sqrt(j)
+
+		expand5bitLUT[i] = byte((vivid + pastel) / 2)
 	}
 }
 
 func (p *PPU) Step(cpuCycles int) {
+
 	// In case of PPU disabled
-	if p.lcdcBits[7] == 0 {
+	if !p.isLCDEnabled {
 		p.prevLY = p.ly
 		p.ly = 0
 		p.wly = 0
@@ -163,22 +218,22 @@ func (p *PPU) Step(cpuCycles int) {
 // Update the frame buffer by one line
 func (p *PPU) pixelTransfer() {
 	// init vp
-	base := int(p.ly) * 160
+	/* base := int(p.ly) * 160
 	for i := 0; i < 160; i++ {
 		vp := &p.vp[base+i]
 		vp.pl = 0
 		vp.num = 0
-	}
+	} */
 
 	// BG/Window is On
-	if p.lcdcBits[0] == 1 {
+	if p.isBGWEnabledOrPriority || p.IsCGB {
 
 		// BG
 		p.BGTransfer()
 
 		// Window is On
-		if p.lcdcBits[5] == 1 {
-			if p.prevLCDC5 == 0 {
+		if p.isWindowEnabled {
+			if !p.isPrevWindowEnabled {
 				p.wly = 0
 			}
 			if p.ly >= p.wy {
@@ -188,16 +243,13 @@ func (p *PPU) pixelTransfer() {
 				}
 			}
 		}
-		p.prevLCDC5 = p.lcdcBits[5]
+		p.isPrevWindowEnabled = p.isWindowEnabled
 	}
 
 	// Obj is On
-	if p.lcdcBits[1] == 1 {
+	if p.isOBJEnabled {
 		p.objectsTransfer()
 	}
-
-	// Convert vp to FB
-	p.resolvePalette()
 }
 
 func (p *PPU) setPPUMode(nextMode int) {
@@ -218,7 +270,7 @@ func (p *PPU) checkSTATInt() {
 func (p *PPU) oamSearch() {
 	p.objList = p.objList[:0] // =[]int{}
 
-	bigMode := p.lcdcBits[2] == 1
+	bigMode := p.isOBJBigSize
 	ly := int(p.ly)
 
 	// List the objects in ascending OAM index order
@@ -251,15 +303,22 @@ func (p *PPU) objectsTransfer() {
 
 	// Sort the list X Position DESC or OAM index DESC
 	sortedList := []int{}
-	for _, oami := range p.objList {
-		insPos := len(sortedList)
-		for j, oamj := range sortedList {
-			if p.oam[oami<<2+1] >= p.oam[oamj<<2+1] {
-				insPos = j
-				break
-			}
+
+	if p.IsCGB && p.IsCGBstylePri {
+		for _, v := range p.objList {
+			sortedList = util.InsertSlice(sortedList, 0, v)
 		}
-		sortedList = util.InsertSlice(sortedList, insPos, oami)
+	} else {
+		for _, oami := range p.objList {
+			insPos := len(sortedList)
+			for j, oamj := range sortedList {
+				if p.oam[oami<<2+1] >= p.oam[oamj<<2+1] {
+					insPos = j
+					break
+				}
+			}
+			sortedList = util.InsertSlice(sortedList, insPos, oami)
+		}
 	}
 
 	// Draw objects to vp in the order sorted above
@@ -276,11 +335,15 @@ func (p *PPU) objectsTransfer() {
 		data := [2]byte{}
 		data = p.getObjectTile(idx, attr, tilePy)
 
-		var pl uint8
-		if (attr & (1 << 4)) == 0 {
-			pl = OBP0
+		var pl int
+		if p.IsCGB {
+			pl = CGB_OBP0 + int(attr&0x07)
 		} else {
-			pl = OBP1
+			if (attr & (1 << 4)) == 0 {
+				pl = DMG_OBP0
+			} else {
+				pl = DMG_OBP1
+			}
 		}
 
 		// Draw tileData(one row) on vp
@@ -291,11 +354,18 @@ func (p *PPU) objectsTransfer() {
 				continue
 			}
 			tgt := tgtY + tgtX
+
 			bgwNum := p.vp[tgt].num
+
+			if p.IsCGB {
+				if p.isBGWEnabledOrPriority && (bgwNum != 0 && p.vp[tgt].isBGWPri) {
+					continue
+				}
+			}
 
 			// In the case below, the Object pixel is hidden under the BG/W
 			pri := (attr & (1 << 7)) >> 7
-			if pri == 1 && bgwNum != 0 {
+			if p.isBGWEnabledOrPriority && (pri == 1 && bgwNum != 0) {
 				continue
 			}
 			// 2-bit monochrome (DMG)
@@ -318,7 +388,11 @@ func (p *PPU) objectsTransfer() {
 func (p *PPU) getObjectTile(idx, attr byte, tilePy int) [2]byte {
 	isYFlip := attr&(1<<6) != 0
 	isXFlip := attr&(1<<5) != 0
-	if p.lcdcBits[2] == 1 { // OBJ size
+	bank := int(0)
+	if p.IsCGB && attr&(1<<3) != 0 {
+		bank = 1
+	}
+	if p.isOBJBigSize { // OBJ size
 		idx &= 0xFE // When 8x16, idx is masked to even numbers only
 		if isYFlip {
 			tilePy = 15 - tilePy
@@ -332,9 +406,9 @@ func (p *PPU) getObjectTile(idx, attr byte, tilePy int) [2]byte {
 	data := [2]byte{}
 	for i := 0; i < 2; i++ {
 		addr := base + uint16(tilePy<<1+i)
-		data[i] = p.ReadVRAM(addr)
+		data[i] = p.vram[bank][addr]
 		if isXFlip {
-			data[i] = p.xFlipLUT[data[i]]
+			data[i] = xFlipLUT[data[i]]
 		}
 	}
 	return data
@@ -347,6 +421,10 @@ func (p *PPU) BGTransfer() {
 	bgY := int(p.ly + p.scy)
 	bgRow := bgY >> 3    // =/8
 	tilePy := bgY & 0x07 // =%8
+	pl := DMG_BGP        // If DMG, Always BGP
+	var isXFlip bool
+	var isBGWPri bool
+
 	for x := 0; x < 160; x++ {
 		bgX := byte(x) + p.scx // wrapされる
 		tilePx := bgX & 0x07   // =%8
@@ -355,13 +433,35 @@ func (p *PPU) BGTransfer() {
 		if x == 0 || tilePx == 0 {
 			bgCol := int(bgX) >> 3
 			bgIdx := bgRow<<5 + bgCol // <<5 == *32
-			data = p.getBGWTile(BG, bgIdx, tilePy)
+			mapAddr := p.getBGWMapAddr(p.isSetBGTileMapAreaBit, bgIdx)
+			if p.IsCGB {
+				attr := p.vram[1][mapAddr]
+				pl = CGB_BGP0 + int(attr&0x07)
+				isXFlip = attr&(1<<5) != 0
+				isYFlip := attr&(1<<6) != 0
+				isBGWPri = attr&(1<<7) != 0
+				if isYFlip {
+					data = p.getBGWTile(mapAddr, 7-tilePy)
+				} else {
+					data = p.getBGWTile(mapAddr, tilePy)
+				}
+			} else {
+				pl = DMG_BGP
+				data = p.getBGWTile(mapAddr, tilePy)
+			}
 		}
-		lo := (data[0] >> (7 - tilePx)) & 1
-		hi := (data[1] >> (7 - tilePx)) & 1
+		var lo, hi byte
+		if isXFlip {
+			lo = (data[0] >> tilePx) & 1
+			hi = (data[1] >> tilePx) & 1
+		} else {
+			lo = (data[0] >> (7 - tilePx)) & 1
+			hi = (data[1] >> (7 - tilePx)) & 1
+		}
 		num := (hi << 1) | lo
 		p.vp[vpIdxY+x].num = num
-		p.vp[vpIdxY+x].pl = BGP
+		p.vp[vpIdxY+x].pl = pl
+		p.vp[vpIdxY+x].isBGWPri = isBGWPri
 	}
 }
 
@@ -372,6 +472,10 @@ func (p *PPU) WindowTransfer() bool {
 	vpIdxY := int(p.ly) * 160
 	wRow := p.wly >> 3     // =/8
 	tilePy := p.wly & 0x07 // =%8
+	pl := DMG_BGP          // If DMG, Always BGP
+	var isXFlip bool
+	var isBGWPri bool
+
 	for x := 0; x < 160; x++ {
 		bgX := x - (int(p.wx) - 7)
 		tilePx := bgX & 0x07 // =%8
@@ -380,71 +484,147 @@ func (p *PPU) WindowTransfer() bool {
 		if x == 0 || tilePx == 0 {
 			wCol := bgX >> 3
 			wIdx := wRow<<5 + wCol // <<5 == *32
-			data = p.getBGWTile(Window, wIdx, tilePy)
+			mapAddr := p.getBGWMapAddr(p.isSetWindowTileMapAreaBit, wIdx)
+			if p.IsCGB {
+				attr := p.vram[1][mapAddr]
+				pl = CGB_BGP0 + int(attr&0x07)
+				isXFlip = attr&(1<<5) != 0
+				isYFlip := attr&(1<<6) != 0
+				isBGWPri = attr&(1<<7) != 0
+				if isYFlip {
+					data = p.getBGWTile(mapAddr, 7-tilePy)
+				} else {
+					data = p.getBGWTile(mapAddr, tilePy)
+				}
+			} else {
+				pl = DMG_BGP
+				data = p.getBGWTile(mapAddr, tilePy)
+			}
 		}
 		if bgX < 0 || bgX >= 160 {
 			continue
 		}
-		lo := (data[0] >> (7 - tilePx)) & 1
-		hi := (data[1] >> (7 - tilePx)) & 1
+		var lo, hi byte
+		if isXFlip {
+			lo = (data[0] >> tilePx) & 1
+			hi = (data[1] >> tilePx) & 1
+		} else {
+			lo = (data[0] >> (7 - tilePx)) & 1
+			hi = (data[1] >> (7 - tilePx)) & 1
+		}
 		num := (hi << 1) | lo
 		p.vp[vpIdxY+x].num = num
-		p.vp[vpIdxY+x].pl = BGP
+		p.vp[vpIdxY+x].pl = pl
+		p.vp[vpIdxY+x].isBGWPri = isBGWPri
+
 		isDrawn = true
 	}
 	return isDrawn
 }
 
 // Get one row of tileData as background or window
-func (p *PPU) getBGWTile(bgwID, idx, py int) [2]byte {
-	var mapStart uint16
-	var addrType int
-	switch bgwID {
-	case BG:
-		addrType = int(p.lcdcBits[3])
-	case Window:
-		addrType = int(p.lcdcBits[6])
-	}
-	if addrType == 0 {
-		mapStart = 0x1800
-	} else {
-		mapStart = 0x1C00
-	}
-	mapAddr := mapStart + uint16(idx)
-	tileIdx := p.ReadVRAM(mapAddr)
+func (p *PPU) getBGWTile(mapAddr uint16, py int) [2]byte {
+	bank := byte(0) // If DMG, always 0
+	tileIdx := p.vram[0][mapAddr]
 
+	// CGB mode only
+	mapAttr := byte(0)
+	if p.IsCGB {
+		mapAttr = p.vram[1][mapAddr]
+		bank = (mapAttr & (1 << 3)) >> 3
+	}
 	tileStart := uint16(0)
-	if p.lcdcBits[4] == 0 {
-		tileStart = uint16(0x1000 + int(int8(tileIdx))<<4)
-	} else {
+	if p.isSetBGWTileDataAreaBit { // Get tile data area
 		tileStart = uint16(tileIdx) << 4
+	} else {
+		tileStart = uint16(0x1000 + int(int8(tileIdx))<<4)
 	}
 	tileAddr := tileStart + uint16(py*2)
 	return [2]byte{
-		p.ReadVRAM(tileAddr),
-		p.ReadVRAM(tileAddr + 1),
+		p.vram[bank][tileAddr],
+		p.vram[bank][tileAddr+1],
 	}
 }
 
-// After color conversion, transfer vp to the frame buffer
-func (p *PPU) resolvePalette() {
-	tgtBase := int(p.ly) * 160
-	for x := 0; x < 160; x++ {
-		tgt := tgtBase + x
-		data := p.vp[tgt].num
-		pl := p.vp[tgt].pl
-		switch pl {
-		case BGP:
-			p.FB[tgt] = p.plBGP[data]
-		case OBP0:
-			p.FB[tgt] = p.plOBP0[data]
-		case OBP1:
-			p.FB[tgt] = p.plOBP1[data]
-		default:
-			p.FB[tgt] = 0
+func (p *PPU) getBGWMapAddr(isSetTileMapAreaBit bool, idx int) uint16 {
+	var mapStartAddr uint16
+	if isSetTileMapAreaBit { // Get tile map area
+		mapStartAddr = 0x1C00
+	} else {
+		mapStartAddr = 0x1800
+	}
+	mapAddr := mapStartAddr + uint16(idx)
+	return mapAddr
+}
+
+// Get Viewport pixels converted from colorNum to RGBA
+func (p *PPU) GetPixelsInRGBA(tgt int) color.RGBA {
+	if !p.isLCDEnabled {
+		if p.IsCGB {
+			return color.RGBA{expand5bitLUT[31], expand5bitLUT[31], expand5bitLUT[31], 255}
+		}
+		return p.dmgColorRGBA[0]
+	}
+	rgba := color.RGBA{255, 255, 255, 255}
+	num := p.vp[tgt].num // num = 0 ~ 3
+	pl := p.vp[tgt].pl
+	switch {
+	case pl == DMG_BGP:
+		color := p.bgpData[num]
+		rgba = p.dmgColorRGBA[color]
+	case pl == DMG_OBP0:
+		color := p.obp0Data[num]
+		rgba = p.dmgColorRGBA[color]
+	case pl == DMG_OBP1:
+		color := p.obp1Data[num]
+		rgba = p.dmgColorRGBA[color]
+	default: // = CGB
+		onePlSize := 8
+		oneColorSize := 2
+		var baseAddr int
+		var lo uint16
+		var hi uint16
+		if pl >= CGB_BGP0 && pl < CGB_BGP0+8 {
+			baseAddr = (pl-CGB_BGP0)*onePlSize + int(num)*oneColorSize
+			lo = uint16(p.bgpRAM[baseAddr])
+			hi = uint16(p.bgpRAM[baseAddr+1])
+		} else if pl >= CGB_OBP0 && pl < CGB_OBP0+8 {
+			baseAddr = (pl-CGB_OBP0)*onePlSize + int(num)*oneColorSize
+			lo = uint16(p.obpRAM[baseAddr])
+			hi = uint16(p.obpRAM[baseAddr+1])
+		}
+		r := byte(lo & 0x1F)                                                         // lo0,1,2,3,4
+		g := byte(((hi & 0x03) << 3) | ((lo & 0xE0) >> 5))                           // hi0,1 + lo5,6,7
+		b := byte((hi & 0x7C) >> 2)                                                  // hi2,3,4,5,6
+		rgba = color.RGBA{expand5bitLUT[r], expand5bitLUT[g], expand5bitLUT[b], 255} // RGB555 to RGBA
+	}
+	return rgba
+}
+
+/* // Also converts to RGBA
+func (g *Game) updateImgFromFB(fb []byte) {
+	srcBase := 0
+	dstBase := 0
+	for y := 0; y < 144; y++ {
+		srcBase = y * 160
+		dstBase = srcBase
+		if isShowDebug {
+			dstBase *= 2
+		}
+		for x := 0; x < 160; x++ {
+			colorNum := fb[srcBase+x]
+			dst := (dstBase + x) * 4
+			var rgba []byte
+			if g.emu.IsCGB {
+
+			} else {
+				rgba = g.palette[colorNum][:]
+			}
+			copy(g.img[dst:dst+4], rgba)
 		}
 	}
 }
+*/
 
 func (p *PPU) ReadVRAM(addr uint16) byte {
 	offset := addr & 0x1FFF // To prevent out of range errors
@@ -461,6 +641,7 @@ func (p *PPU) GetVBK() byte {
 }
 
 func (p *PPU) SetVBK(val byte) {
+	//fmt.Printf("VBK set to %d\n", val&0x01)
 	p.bank = val & 0x01
 }
 
@@ -480,20 +661,27 @@ func (p *PPU) SetDMA(val byte) {
 }
 
 func (p *PPU) GetLCDC() byte {
-	lcdc := byte(0)
-	for i, v := range p.lcdcBits {
-		lcdc |= v << i
-	}
-	return lcdc
+	v := byte(0)
+	v |= util.BoolToByte(p.isBGWEnabledOrPriority) * 1     // bit0 (different meaning in CGB mode)
+	v |= util.BoolToByte(p.isOBJEnabled) * 2               // bit1
+	v |= util.BoolToByte(p.isOBJBigSize) * 4               // bit2
+	v |= util.BoolToByte(p.isSetBGTileMapAreaBit) * 8      // bit3
+	v |= util.BoolToByte(p.isSetBGWTileDataAreaBit) * 16   // bit4
+	v |= util.BoolToByte(p.isWindowEnabled) * 32           // bit5
+	v |= util.BoolToByte(p.isSetWindowTileMapAreaBit) * 64 // bit6
+	v |= util.BoolToByte(p.isLCDEnabled) * 128             // bit7
+	return v
 }
 
 func (p *PPU) SetLCDC(val byte) {
-	p.lcdcBits = [8]uint8{}
-	for i := 0; i < 8; i++ {
-		if val&(1<<i) != 0 {
-			p.lcdcBits[i] = 1
-		}
-	}
+	p.isBGWEnabledOrPriority = val&(1<<0) != 0
+	p.isOBJEnabled = val&(1<<1) != 0
+	p.isOBJBigSize = val&(1<<2) != 0
+	p.isSetBGTileMapAreaBit = val&(1<<3) != 0
+	p.isSetBGWTileDataAreaBit = val&(1<<4) != 0
+	p.isWindowEnabled = val&(1<<5) != 0
+	p.isSetWindowTileMapAreaBit = val&(1<<6) != 0
+	p.isLCDEnabled = val&(1<<7) != 0
 }
 
 func (p *PPU) GetSTAT() byte {
@@ -525,7 +713,7 @@ func (p *PPU) GetOBP0() byte {
 
 func (p *PPU) SetOBP0(val byte) {
 	for i := 0; i < 4; i++ {
-		p.plOBP0[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
+		p.obp0Data[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
 	}
 	p.obp0 = val
 }
@@ -536,7 +724,7 @@ func (p *PPU) GetOBP1() byte {
 
 func (p *PPU) SetOBP1(val byte) {
 	for i := 0; i < 4; i++ {
-		p.plOBP1[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
+		p.obp1Data[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
 	}
 	p.obp1 = val
 }
@@ -547,7 +735,7 @@ func (p *PPU) GetBGP() byte {
 
 func (p *PPU) SetBGP(val byte) {
 	for i := 0; i < 4; i++ {
-		p.plBGP[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
+		p.bgpData[i] = (val & (0x03 << (2 * uint8(i)))) >> (2 * uint8(i))
 	}
 	p.bgp = val
 }
@@ -582,4 +770,116 @@ func (p *PPU) GetSCX() byte {
 
 func (p *PPU) SetSCX(val byte) {
 	p.scx = val
+}
+
+// (CGB mode only)
+func (p *PPU) GetBCPS() byte {
+	return p.bcps
+}
+
+// (CGB mode only)
+func (p *PPU) SetBCPS(val byte) {
+	p.bcps = val
+}
+
+// Read paletteRAM[BCPS.Address]
+// (CGB mode only)
+func (p *PPU) GetBCPD() byte {
+	addr := p.bcps & 0x3F
+	return p.bgpRAM[addr]
+}
+
+// Write to paletteRAM[BCPS.Address].
+// And if BCPS.Auto-increment is enabled,
+// increment BCPS.Address
+// (CGB mode only)
+func (p *PPU) SetBCPD(val byte) {
+	addr := p.bcps & 0x3F
+	p.bgpRAM[addr] = val
+	if p.bcps&0x80 != 0 {
+		newAddr := (addr + 1) & 0x3F
+		p.bcps = 0x80 | newAddr
+	}
+}
+
+// OCPS/OCPD exactly like BCPS/BCPD respectively
+// (CGB mode only)
+func (p *PPU) GetOCPS() byte {
+	//fmt.Println("GetOCPS")
+	return p.ocps
+}
+func (p *PPU) SetOCPS(val byte) {
+	//fmt.Println("SetOCPS")
+	p.ocps = val
+}
+func (p *PPU) GetOCPD() byte {
+	//fmt.Println("GetOCPD")
+	addr := p.ocps & 0x3F
+	return p.obpRAM[addr]
+}
+func (p *PPU) SetOCPD(val byte) {
+	//fmt.Println("SetOCPD")
+	addr := p.ocps & 0x3F
+	p.obpRAM[addr] = val
+	if p.ocps&0x80 != 0 {
+		newAddr := (addr + 1) & 0x3F
+		p.ocps = 0x80 | newAddr
+	}
+}
+
+// ====================================== HDMA Registers (CGB mode only) ==========================
+// VRAM DMA Source (high)
+func (p *PPU) SetHDMA1(val byte) {
+	//fmt.Println("SetHDMA1")
+	p.VDMASrc = (uint16(val) << 8) | (p.VDMASrc & 0x00F0)
+}
+
+// VRAM DMA Source (low)
+func (p *PPU) SetHDMA2(val byte) {
+	//fmt.Println("SetHDMA2")
+	p.VDMASrc = (p.VDMASrc & 0xFF00) | (uint16(val) & 0x00F0)
+}
+
+// VRAM DMA Destination (high)
+func (p *PPU) SetHDMA3(val byte) {
+	//fmt.Println("SetHDMA3")
+	p.VDMADst = ((uint16(val) << 8) & 0x1F00) | (p.VDMADst & 0x00F0)
+}
+
+// VRAM DMA Destination (low)
+func (p *PPU) SetHDMA4(val byte) {
+	//fmt.Println("SetHDMA4")
+	p.VDMADst = (p.VDMADst & 0x1F00) | (uint16(val) & 0x00F0)
+}
+
+// incomplete implementation
+func (p *PPU) GetHDMA5() byte {
+	//fmt.Println("GetHDMA5")
+	if p.VDMALen == 0 {
+		return 0xFF
+	} else {
+		return byte(p.VDMALen/0x10 - 1)
+	}
+}
+
+// VRAM DMA length/mode/start
+func (p *PPU) SetHDMA5(val byte) {
+	//fmt.Println("SetHDMA5")
+	p.VDMALen = ((int(val) & 0x7F) + 1) * 0x10 // Therefore, transfer length == $10 ~ $800 Bytes
+	//mode := p.hdma5 & 0x80 // 0 == General-purpose DMA        1 == HBlank DMA
+	// Transfer is done via Bus
+}
+
+// CGB mode only
+func (p *PPU) GetOPRI() byte {
+	if p.IsCGBstylePri {
+		return 0xFE
+	} else {
+		return 0xFF
+	}
+}
+
+// CGB mode only
+func (p *PPU) SetOPRI(val byte) {
+	p.IsCGBstylePri = val&0x01 == 0
 }

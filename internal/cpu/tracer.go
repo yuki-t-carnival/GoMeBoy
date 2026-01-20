@@ -66,7 +66,7 @@ func (t *Tracer) Dump() {
 				"HL:%02X%02X "+
 				"SP:%04X "+
 				"Op:%04X "+
-				"OpName:%s\n",
+				"Fn:%s\n",
 			buf.pc,
 			buf.a, buf.f,
 			buf.b, buf.c,
@@ -95,7 +95,8 @@ func (t *Tracer) GetCPUInfo() []string {
 	str = append(str, fmt.Sprintf("DE:%02X%02X", buf.d, buf.e))
 	str = append(str, fmt.Sprintf("HL:%02X%02X", buf.h, buf.l))
 	str = append(str, fmt.Sprintf("SP:%04X", buf.sp))
+	str = append(str, "")
 	str = append(str, fmt.Sprintf("Op:%04X", buf.op))
-	str = append(str, fmt.Sprintf("OpName:%s", buf.opName))
+	str = append(str, fmt.Sprintf("Fn:%s", buf.opName))
 	return str
 }

@@ -28,7 +28,7 @@ func NewCPU(b *bus.Bus) *CPU {
 		Bus: b,
 		pc:  0x100,
 		sp:  0xFFFE,
-		a:   0x01,
+		a:   0x11,
 		f:   0xB0,
 		b:   0x00,
 		c:   0x13,

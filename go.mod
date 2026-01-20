@@ -4,7 +4,14 @@ go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/hajimehoshi/ebiten/v2 v2.9.6
+	github.com/hajimehoshi/ebiten/v2 v2.9.7
+)
+
+require (
+	github.com/ebitengine/oto/v3 v3.4.0 // indirect
+	github.com/hajimehoshi/oto v0.6.8 // indirect
+	golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
+	golang.org/x/mobile v0.0.0-20210208171126-f462b3930c8f // indirect
 )
 
 require (
@@ -12,6 +19,7 @@ require (
 	github.com/ebitengine/hideconsole v1.0.0 // indirect
 	github.com/ebitengine/purego v0.9.0 // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
+	github.com/hajimehoshi/ebiten v1.12.13
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/image v0.31.0 // indirect

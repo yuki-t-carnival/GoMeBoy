@@ -5,9 +5,9 @@
 This is a **Game Boy emulator** written in **Go**, using **Ebiten**.  
 It was developed with assistance from **ChatGPT**.
 
-⚠️ This emulator is still a work in progress and contains many bugs.  
-🔇 Sound is **not supported**.  
-🎮 Only **DMG** and **MBC1** cartridges are supported.
+⚠️ This emulator is developed for learning purposes. So, it's still a work in progress and **contains many bugs**.  
+🔇 Sound is **very unstable**.  
+🎮 **DMG/CGB** and **No MBC/MBC1/MBC5** cartridges are partially supported.
 
 ![GOmeBoy thumbnail](thumbnail.png)
 
