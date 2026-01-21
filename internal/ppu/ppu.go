@@ -203,10 +203,10 @@ func (p *PPU) Step(cpuCycles int) {
 
 	p.checkSTATInt()
 
-	// 1 Line == 456 CPU cycles
+	// 1 Line == 454 CPU cycles
 	p.cycles += cpuCycles
-	if p.cycles >= 456 {
-		p.cycles -= 456
+	if p.cycles >= 454 {
+		p.cycles -= 454
 		p.ly++
 		p.isLockLYCInt = false
 		if p.ly == 154 {

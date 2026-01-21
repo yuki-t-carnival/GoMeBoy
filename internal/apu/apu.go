@@ -79,8 +79,11 @@ type APU struct {
 // ************************************ Public functions *******************************************
 
 func NewAPU() *APU {
+	bufMilliSecond := 100
+	bufSize := SampleRate * 4 * bufMilliSecond / 1000
+
 	a := &APU{
-		AudioStream: NewAudioStream(SampleRate * 4),
+		AudioStream: NewAudioStream(bufSize),
 		lfsr:        0x7FFF,
 	}
 	return a
@@ -107,11 +110,11 @@ func (a *APU) GetAPUInfo() []string {
 	if time.Since(a.timeOfDebugStrsCreated).Milliseconds() >= 500 {
 		a.debugStrs = []string{}
 		a.debugStrs = append(a.debugStrs, "BUF STATUS")
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Stock buf:%d", a.AudioStream.stock>>2))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Fill0 cnt:%d", a.AudioStream.fillZeroCnt>>2))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Skip cnt:%d", a.AudioStream.skipCnt>>2))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Read cnt:%d", a.AudioStream.readCnt>>2))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Write cnt:%d", a.AudioStream.writeCnt>>2))
+		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Stock buf:%6d/%6d", a.AudioStream.stock, len(a.AudioStream.buffer)))
+		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Fill0 cnt:%d", a.AudioStream.fillZeroCnt))
+		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Skip cnt:%d", a.AudioStream.skipCnt))
+		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Read cnt:%d", a.AudioStream.readCnt))
+		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Write cnt:%d", a.AudioStream.writeCnt))
 		a.timeOfDebugStrsCreated = time.Now()
 	}
 	return a.debugStrs
@@ -120,21 +123,26 @@ func (a *APU) GetAPUInfo() []string {
 // *********************************** Private functions *******************************************
 
 // =================================== Generate Sample =============================================
-func (a *APU) generateSample() []byte {
+func (a *APU) generateSample() [4]byte {
 	sr1, sl1 := a.generateSquareChannel(1)
 	sr2, sl2 := a.generateSquareChannel(2)
 	sr3, sl3 := a.generateWaveChannel()
 	sr4, sl4 := a.generateNoiseChannel()
-	/* s1 = 0
-	s2 = 0
-	s4 = 0 */
+	/* sr1 = 0
+	sl1 = 0
+	sr2 = 0
+	sl2 = 0
+	sr3 = 0
+	sl3 = 0
+	sr4 = 0
+	sl4 = 0 */
 	sr := (sr1 + sr2 + sr3 + sr4) / 4.0
 	sl := (sl1 + sl2 + sl3 + sl4) / 4.0
 	sampleR := int16(sr * 32767)
 	sampleL := int16(sl * 32767)
 	binary.LittleEndian.PutUint16(b[0:2], uint16(sampleL))
 	binary.LittleEndian.PutUint16(b[2:4], uint16(sampleR))
-	return b[:]
+	return b
 }
 
 // ======================================= Channel 1/2 =============================================

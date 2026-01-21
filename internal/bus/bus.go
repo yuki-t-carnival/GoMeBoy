@@ -93,41 +93,43 @@ const (
 )
 
 func NewBus(m *memory.Memory) *Bus {
-	// Serial
-	m.Write(SB, 0x00)
-	m.Write(SC, 0x7E)
-
-	// Interrupt
-	m.Write(IF, 0x01)
-	m.Write(IE, 0x00)
-
-	// Sound
-	m.Write(NR10, 0x80)
-	m.Write(NR11, 0xBF)
-	m.Write(NR12, 0xF3)
-	m.Write(NR14, 0xBF)
-	m.Write(NR21, 0x3F)
-	m.Write(NR22, 0x00)
-	m.Write(NR24, 0xBF)
-	m.Write(NR30, 0x7F)
-	m.Write(NR31, 0xFF)
-	m.Write(NR32, 0x9F)
-	m.Write(NR34, 0xBF)
-	m.Write(NR41, 0xFF)
-	m.Write(NR42, 0x00)
-	m.Write(NR43, 0x00)
-	m.Write(NR44, 0xBF)
-	m.Write(NR50, 0x77)
-	m.Write(NR51, 0xF3)
-	m.Write(NR52, 0xF1)
 
 	bus := &Bus{
-		PPU:    ppu.NewPPU(),
-		APU:    apu.NewAPU(),
-		Timer:  timer.NewTimer(),
+		PPU:   ppu.NewPPU(),
+		APU:   apu.NewAPU(),
+		Timer: timer.NewTimer(),
+
 		Joypad: joypad.NewJoypad(),
 		Memory: m,
 	}
+	// Serial
+	bus.Write(SB, 0x00)
+	bus.Write(SC, 0x7E)
+
+	// Interrupt
+	bus.Write(IF, 0x01)
+	bus.Write(IE, 0x00)
+
+	// Sound
+	bus.Write(NR10, 0x80)
+	bus.Write(NR11, 0xBF)
+	bus.Write(NR12, 0xF3)
+	bus.Write(NR14, 0xBF)
+	bus.Write(NR21, 0x3F)
+	bus.Write(NR22, 0x00)
+	bus.Write(NR24, 0xBF)
+	bus.Write(NR30, 0x7F)
+	bus.Write(NR31, 0xFF)
+	bus.Write(NR32, 0x9F)
+	bus.Write(NR34, 0xBF)
+	bus.Write(NR41, 0xFF)
+	bus.Write(NR42, 0x00)
+	bus.Write(NR43, 0x00)
+	bus.Write(NR44, 0xBF)
+	bus.Write(NR50, 0x77)
+	bus.Write(NR51, 0xF3)
+	bus.Write(NR52, 0xF1)
+
 	return bus
 }
 

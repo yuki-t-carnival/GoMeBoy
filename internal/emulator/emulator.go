@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	CyclesPerFrame = 70221
+	CyclesPerFrame = 69905
 
 	// Emulator mode ID
 	RunMode   = 0

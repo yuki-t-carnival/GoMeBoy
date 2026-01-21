@@ -21,36 +21,37 @@ func NewAudioStream(size int) *AudioStream {
 
 // Implementation of io.Reader.Read()
 func (as *AudioStream) Read(p []byte) (int, error) {
+	fillZeroCounter := 0
 	n := 0
 	for i := range p {
 		if as.stock == 0 {
 			p[i] = 0
 			as.fillZeroCnt++ // for debug
+			fillZeroCounter++
 		} else {
 			p[i] = as.buffer[as.r]
 			as.r = (as.r + 1) % len(as.buffer)
 			as.stock--
 		}
 		n++
-		as.readCnt++ // for debug
 	}
+	mod := fillZeroCounter % 4
+	as.r = (as.r + mod + len(as.buffer)) % len(as.buffer)
+	as.stock += mod
 	return n, nil
 }
 
 // Used in APU
-func (as *AudioStream) write(p []byte) int {
-	n := 0
+func (as *AudioStream) write(p [4]byte) {
+	if as.stock > len(as.buffer)-4 {
+		wasteAmount := len(as.buffer) >> 3 << 2
+		as.r = (as.r + wasteAmount) % len(as.buffer)
+		as.stock -= wasteAmount
+		as.skipCnt += wasteAmount
+	}
 	for _, b := range p {
-		if as.stock >= len(as.buffer) {
-			as.r = (as.r + 1) % len(as.buffer)
-			as.stock -= 1
-			as.skipCnt += 1 // for debug
-		}
 		as.buffer[as.w] = b
 		as.w = (as.w + 1) % len(as.buffer)
 		as.stock++
-		n++
-		as.writeCnt++ // for debug
 	}
-	return n
 }

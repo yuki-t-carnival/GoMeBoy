@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"path/filepath"
 
@@ -55,7 +56,8 @@ func NewGame(g *Game, rom, sav []byte) *Game {
 
 	g.audioCtx = audio.NewContext(apu.SampleRate)
 	g.player, _ = g.audioCtx.NewPlayer(g.emu.CPU.Bus.APU.AudioStream)
-	//g.player.SetBufferSize(1024 * 4)
+	bufDuration := 20 * time.Millisecond
+	g.player.SetBufferSize(bufDuration)
 	g.player.SetVolume(0.2)
 	g.player.Play()
 
@@ -137,7 +139,7 @@ func main() {
 	ebiten.SetWindowSize(windowWidth, windowHeight)
 
 	// Get ROM title
-	s := string(rom[0x0134:0x0144])
+	s := string(rom[0x0134:0x0143])
 	firstNullIdx := strings.IndexByte(s, 0)
 	if firstNullIdx != -1 {
 		s = s[:firstNullIdx]
