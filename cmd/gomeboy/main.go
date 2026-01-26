@@ -62,10 +62,12 @@ func newGame(g *Game, rom, sav []byte) *Game {
 // Game.Update() calls Emulator.RunFrame() at 60FPS.
 func (g *Game) Update() error {
 	g.setWindowTitle()
-	if !ebiten.IsFocused() {
+	if !ebiten.IsFocused() || g.emu.IsPauseMode {
 		g.audioPlayer.Pause()
 	} else {
 		g.audioPlayer.Play()
+	}
+	if ebiten.IsFocused() {
 		if g.emu.RunFrame() == -1 {
 			return ebiten.Termination
 		}

@@ -2,7 +2,6 @@ package apu
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"time"
 )
@@ -127,8 +126,7 @@ func (a *APU) WriteWaveRAM(addr uint16, val byte) {
 func (a *APU) GetAPUInfo() []string {
 	if time.Since(a.timeOfDebugStringsCreated).Milliseconds() >= 500 {
 		a.debugStrings = []string{}
-		a.debugStrings = append(a.debugStrings, "BUF STATUS")
-		a.debugStrings = append(a.debugStrings, fmt.Sprintf("Stock buf:%6d/%6d", a.AudioStream.stock, len(a.AudioStream.buffer)))
+		//a.debugStrings = append(a.debugStrings, "BUF STATUS")
 		a.timeOfDebugStringsCreated = time.Now()
 	}
 	return a.debugStrings
