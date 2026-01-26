@@ -17,7 +17,7 @@ func NewMBC5(rom, sav []byte, TotalRAMBanks int) *MBC5 {
 	mbc5.totalRAMBanks = TotalRAMBanks
 	mbc5.eram = make([]byte, mbc5.totalRAMBanks*0x2000)
 	if len(sav) <= len(mbc5.eram) {
-		mbc5.eram = sav
+		copy(mbc5.eram, sav)
 	}
 	return mbc5
 }
