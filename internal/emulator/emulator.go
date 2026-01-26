@@ -4,24 +4,23 @@ import (
 	"gomeboy/internal/bus"
 	"gomeboy/internal/cpu"
 	"gomeboy/internal/memory"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
 const (
-	CyclesPerFrame = 69905
-
-	// Emulator mode ID
-	RunMode   = 0
-	PauseMode = 1
+	CyclesPerFrame float64 = 4194304.0 / 60.0
 )
 
 type Emulator struct {
-	CPU *cpu.CPU
+	CPU       *cpu.CPU
+	cpuCycles float64
 
-	IsPaused bool
-	emuMode  int
-	IsCGB    bool
+	IsPaused    bool
+	IsPauseMode bool
+	IsCGB       bool
+	ROMTitle    string
 
 	isKeyP       bool
 	isKeyS       bool
@@ -38,10 +37,12 @@ func NewEmulator(rom, sav []byte) *Emulator {
 	c.Tracer = cpu.NewTracer(c)
 
 	e := &Emulator{
-		CPU:      c,
-		emuMode:  RunMode,
-		IsPaused: false,
+		CPU:         c,
+		IsPauseMode: false,
+		IsPaused:    false,
 	}
+
+	e.ROMTitle = e.GetROMTitle(rom)
 
 	cgbReg := e.CPU.Bus.Read(0x0143)
 	if cgbReg == 0xC0 || cgbReg == 0x80 {
@@ -52,18 +53,14 @@ func NewEmulator(rom, sav []byte) *Emulator {
 	return e
 }
 
-// Run one Game Boy frame
 func (e *Emulator) RunFrame() int {
-	cycles := 0
-	var cpuSpeed int
-	isWspeed := e.CPU.Bus.PPU.IsCGB && e.CPU.Bus.IsWSpeed
-	if isWspeed {
+	cpuSpeed := 1
+	if e.CPU.Bus.PPU.IsCGB && e.CPU.Bus.IsWSpeed {
 		cpuSpeed = 2
-	} else {
-		cpuSpeed = 1
 	}
-
-	for cycles < CyclesPerFrame*cpuSpeed {
+	maxCycles := CyclesPerFrame * float64(cpuSpeed)
+	e.CPU.Bus.Joypad.Update()
+	for e.cpuCycles < maxCycles {
 		e.updateEbitenKeys()
 		e.updateEmuMode()
 		if e.CPU.IsPanic || e.isKeyEsc { // for debug
@@ -78,9 +75,9 @@ func (e *Emulator) RunFrame() int {
 		e.CPU.Bus.PPU.Step(c / cpuSpeed)
 		e.CPU.Bus.APU.Step(c / cpuSpeed)
 		e.CPU.Tracer.Record(e.CPU)
-		cycles += c
+		e.cpuCycles += float64(c)
 	}
-	e.CPU.Bus.Joypad.Update()
+	e.cpuCycles -= maxCycles
 	return 0
 }
 
@@ -88,16 +85,12 @@ func (e *Emulator) RunFrame() int {
 // KeyS: Run a single step
 func (e *Emulator) updateEmuMode() {
 	if e.isKeyP {
-		if e.emuMode == RunMode {
-			e.emuMode = PauseMode
-		} else {
-			e.emuMode = RunMode
-		}
+		e.IsPauseMode = !e.IsPauseMode
 	}
-	e.IsPaused = (e.emuMode == PauseMode) && !e.isKeyS
+	e.IsPaused = e.IsPauseMode && !e.isKeyS
 }
 
-// In case of Panic, CPU status is output to the console
+// In case of Panic, CPU status is output to the console.
 func (e *Emulator) panicDump() {
 	e.CPU.Tracer.Dump()
 }
@@ -112,4 +105,31 @@ func (e *Emulator) updateEbitenKeys() {
 	e.isPrevKeyP = isP
 	e.isPrevKeyS = isS
 	e.isPrevKeyEsc = isEsc
+}
+
+func (e *Emulator) GetROMTitle(rom []byte) string {
+	s := string(rom[0x0134:0x0143])
+	firstNullIdx := strings.IndexByte(s, 0)
+	if firstNullIdx != -1 {
+		s = s[:firstNullIdx]
+	}
+	return s
+}
+
+func (e *Emulator) GetDebugLog() []string {
+	var state string
+	if e.IsPaused {
+		state = "PAUSED"
+	} else {
+		state = "PLAY  "
+	}
+	strs := []string{}
+	strs = append(strs, state)
+	strs = append(strs, "")
+	strs = append(strs, e.CPU.Tracer.GetCPUInfo()...)
+	strs = append(strs, "")
+	strs = append(strs, e.CPU.Bus.Memory.GetHeaderInfo()...)
+	strs = append(strs, "")
+	strs = append(strs, e.CPU.Bus.APU.GetAPUInfo()...)
+	return strs
 }

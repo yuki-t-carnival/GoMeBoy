@@ -24,7 +24,6 @@ type Bus struct {
 	IsSwitchArmed bool
 }
 
-// Memory Map Adress
 const (
 	// I/O Registers (FF00 ~ FF7F)
 	P1_JOYP      uint16 = 0xFF00
@@ -93,7 +92,6 @@ const (
 )
 
 func NewBus(m *memory.Memory) *Bus {
-
 	bus := &Bus{
 		PPU:   ppu.NewPPU(),
 		APU:   apu.NewAPU(),
@@ -133,8 +131,8 @@ func NewBus(m *memory.Memory) *Bus {
 	return bus
 }
 
-// Bus accesses the I/O, VRAM, OAM,
-// and request other accesses to Memory
+// The Bus.Read accesses the I/O, VRAM, OAM,
+// and request other accesses to Memory.
 func (b *Bus) Read(addr uint16) byte {
 	switch {
 	// PPU
@@ -168,18 +166,18 @@ func (b *Bus) Read(addr uint16) byte {
 		return b.PPU.GetSCY()
 	case addr == SCX:
 		return b.PPU.GetSCX()
-	case addr == BCPS_BGPI: // CGB mode only
+	case addr == BCPS_BGPI:
 		return b.PPU.GetBCPS()
-	case addr == BCPD_BGPD: // CGB mode only
+	case addr == BCPD_BGPD:
 		return b.PPU.GetBCPD()
-	case addr == OCPS_OBPI: // CGB mode only
+	case addr == OCPS_OBPI:
 		return b.PPU.GetOCPS()
-	case addr == OCPD_OBPD: // CGB mode only
+	case addr == OCPD_OBPD:
 		return b.PPU.GetOCPD()
-	case addr == HDMA5: // CGB mode only
+	case addr == HDMA5:
 		return b.PPU.GetHDMA5()
 	case addr == OPRI:
-		return b.PPU.GetOPRI() // CGB mode only
+		return b.PPU.GetOPRI()
 
 	// Timer
 	case addr == DIV:
@@ -259,8 +257,8 @@ func (b *Bus) Read(addr uint16) byte {
 	}
 }
 
-// Bus accesses the I/O, VRAM, OAM,
-// and request other accesses to Memory
+// The Bus.Write accesses the I/O, VRAM, OAM,
+// and request other accesses to Memory.
 func (b *Bus) Write(addr uint16, val byte) {
 	switch {
 	// PPU
@@ -271,13 +269,13 @@ func (b *Bus) Write(addr uint16, val byte) {
 	case addr == VBK:
 		b.PPU.SetVBK(val)
 	case addr == DMA:
-		b.PPU.SetDMA(val) // Acts as a trigger to start a DMA transfer
+		b.PPU.SetDMA(val)
 		if val <= 0xDF {
 			b.IsDMATransferInProgress = true
 			b.DMATransferIndex = 0
 		}
 	case addr == LCDC:
-		b.PPU.SetLCDC(val) // TODO: LCD&PPU can be disabled only during VBlank period
+		b.PPU.SetLCDC(val) // TODO: LCD&PPU can be disabled only during VBlank period.
 	case addr == STAT:
 		b.PPU.SetSTAT(val)
 	case addr == SCY:
@@ -285,7 +283,7 @@ func (b *Bus) Write(addr uint16, val byte) {
 	case addr == SCX:
 		b.PPU.SetSCX(val)
 	case addr == LY:
-		// Writing is prohibited
+		// Writing is prohibited.
 	case addr == LYC:
 		b.PPU.SetLYC(val)
 	case addr == BGP:
@@ -298,26 +296,26 @@ func (b *Bus) Write(addr uint16, val byte) {
 		b.PPU.SetWY(val)
 	case addr == WX:
 		b.PPU.SetWX(val)
-	case addr == BCPS_BGPI: // CGB mode only
+	case addr == BCPS_BGPI:
 		b.PPU.SetBCPS(val)
-	case addr == BCPD_BGPD: // CGB mode only
+	case addr == BCPD_BGPD:
 		b.PPU.SetBCPD(val)
-	case addr == OCPS_OBPI: // CGB mode only
+	case addr == OCPS_OBPI:
 		b.PPU.SetOCPS(val)
-	case addr == OCPD_OBPD: // CGB mode only
+	case addr == OCPD_OBPD:
 		b.PPU.SetOCPD(val)
-	case addr == HDMA1: // CGB mode only
+	case addr == HDMA1:
 		b.PPU.SetHDMA1(val)
-	case addr == HDMA2: // CGB mode only
+	case addr == HDMA2:
 		b.PPU.SetHDMA2(val)
-	case addr == HDMA3: // CGB mode only
+	case addr == HDMA3:
 		b.PPU.SetHDMA3(val)
-	case addr == HDMA4: // CGB mode only
+	case addr == HDMA4:
 		b.PPU.SetHDMA4(val)
-	case addr == HDMA5: // CGB mode only
+	case addr == HDMA5:
 		b.PPU.SetHDMA5(val)
 		b.vdmaTransfer()
-	case addr == OPRI: // CGB mode only
+	case addr == OPRI:
 		b.PPU.SetOPRI(val)
 
 	// Timer
@@ -398,9 +396,7 @@ func (b *Bus) Write(addr uint16, val byte) {
 	}
 }
 
-// During DMA Transfer, CPU is stopped and 4 cycles elapse for each byte transferred
 func (b *Bus) DMATransfer() {
-	//fmt.Println("DMA Transfer")
 	if !(b.PPU.GetDMA() <= 0xDF) || !b.IsDMATransferInProgress {
 		panic("DMA transfer error")
 	}
@@ -417,7 +413,6 @@ func (b *Bus) DMATransfer() {
 }
 
 func (b *Bus) vdmaTransfer() {
-	//fmt.Println("VDMA Transfer")
 	src := b.PPU.VDMASrc
 	dst := b.PPU.VDMADst
 	len := b.PPU.VDMALen
@@ -427,7 +422,6 @@ func (b *Bus) vdmaTransfer() {
 	b.PPU.VDMALen = 0
 }
 
-// CGB mode only
 func (b *Bus) GetKEY1() byte {
 	v := byte(0x7E)
 	if b.IsWSpeed {
@@ -439,7 +433,6 @@ func (b *Bus) GetKEY1() byte {
 	return v
 }
 
-// CGB mode only
 func (b *Bus) SetKEY1(val byte) {
 	b.IsWSpeed = val&0x80 != 0
 	b.IsSwitchArmed = val&0x01 != 0

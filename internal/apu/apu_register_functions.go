@@ -36,6 +36,7 @@ func (a *APU) GetNR11() byte {
 	return a.nr11
 }
 func (a *APU) SetNR11(val byte) {
+	a.ch1LengthTimer = int(val & 0x3F)
 	a.nr11 = val
 }
 func (a *APU) GetNR12() byte {
@@ -48,18 +49,20 @@ func (a *APU) GetNR13() byte {
 	return a.nr13
 }
 func (a *APU) SetNR13(val byte) {
+	a.ch1Period = (uint16(a.nr14&0x07) << 8) | uint16(val)
 	a.nr13 = val
 }
 func (a *APU) GetNR14() byte {
 	return a.nr14
 }
 func (a *APU) SetNR14(val byte) {
-	if val&0x80 != 0 { // isTriggered?
-		a.nr52 |= (1 << 0) // Enable ch1
+	a.ch1Period = (uint16(val&0x07) << 8) | uint16(a.nr13)
+	if val&0x80 != 0 {
+		a.nr52 |= (1 << 0)
 		a.ch1Vol = a.nr12 >> 4
-		a.ch1LenTimer = int(a.nr11 & 0x3F)
-		a.ch1SampCntForLenTimer = 0
-		a.ch1SampCntForEnv = 0
+		a.ch1LengthTimer = int(a.nr11 & 0x3F)
+		a.ch1SampleCountForLengthTimer = 0
+		a.ch1SampleCountForEnvelope = 0
 		a.ch1Phase = 0
 	}
 	a.nr14 = val
@@ -71,6 +74,7 @@ func (a *APU) GetNR21() byte {
 	return a.nr21
 }
 func (a *APU) SetNR21(val byte) {
+	a.ch2LengthTimer = int(val & 0x3F)
 	a.nr21 = val
 }
 func (a *APU) GetNR22() byte {
@@ -83,18 +87,20 @@ func (a *APU) GetNR23() byte {
 	return a.nr23
 }
 func (a *APU) SetNR23(val byte) {
+	a.ch2Period = (uint16(a.nr24&0x07) << 8) | uint16(val)
 	a.nr23 = val
 }
 func (a *APU) GetNR24() byte {
 	return a.nr24
 }
 func (a *APU) SetNR24(val byte) {
-	if val&0x80 != 0 { // isTriggered?
-		a.nr52 |= (1 << 1) // Enable ch2
+	a.ch2Period = (uint16(val&0x07) << 8) | uint16(a.nr23)
+	if val&0x80 != 0 {
+		a.nr52 |= (1 << 1)
 		a.ch2Vol = a.nr22 >> 4
-		a.ch2LenTimer = int(a.nr21 & 0x3F)
-		a.ch2SampCntForLenTimer = 0
-		a.ch2SampCntForEnv = 0
+		a.ch2LengthTimer = int(a.nr21 & 0x3F)
+		a.ch2SampleCountForLengthTimer = 0
+		a.ch2SampleCountForEnvelope = 0
 		a.ch2Phase = 0
 	}
 	a.nr24 = val
@@ -112,6 +118,7 @@ func (a *APU) GetNR31() byte {
 	return a.nr31
 }
 func (a *APU) SetNR31(val byte) {
+	a.ch3LengthTimer = int(val)
 	a.nr31 = val
 }
 func (a *APU) GetNR32() byte {
@@ -130,11 +137,11 @@ func (a *APU) GetNR34() byte {
 	return a.nr34
 }
 func (a *APU) SetNR34(val byte) {
-	if val&0x80 != 0 { // isTriggered?
-		a.nr52 |= (1 << 2) // Enable ch3
-		a.ch3LenTimer = int(a.nr31)
-		a.ch3SampCntForLenTimer = 0
-		a.idxWavRAM = 0
+	if val&0x80 != 0 {
+		a.nr52 |= (1 << 2)
+		a.ch3LengthTimer = int(a.nr31)
+		a.ch3SampleCountForLengthTimer = 0
+		a.indexWaveRAM = 0
 		a.ch3Phase = 0
 	}
 	a.nr34 = val
@@ -146,6 +153,7 @@ func (a *APU) GetNR41() byte {
 	return a.nr41
 }
 func (a *APU) SetNR41(val byte) {
+	a.ch4LengthTimer = int(val & 0x3F)
 	a.nr41 = val
 }
 func (a *APU) GetNR42() byte {
@@ -164,15 +172,15 @@ func (a *APU) GetNR44() byte {
 	return a.nr44
 }
 func (a *APU) SetNR44(val byte) {
-	if val&0x80 != 0 { // isTriggered?
-		a.nr52 |= (1 << 3) // Enable ch4
+	if val&0x80 != 0 {
+		a.nr52 |= (1 << 3)
 		a.ch4Vol = a.nr42 >> 4
-		a.ch4LenTimer = int(a.nr41 & 0x3F)
-		a.ch4SampCntForLenTimer = 0
-		a.ch4SampCntForEnv = 0
+		a.ch4LengthTimer = int(a.nr41 & 0x3F)
+		a.ch4SampleCountForLengthTimer = 0
+		a.ch4SampleCountForEnvelope = 0
 
 		a.lfsr = 0x7FFF
-		a.ch4SampCntForLFSR = 0
+		a.ch4SampleCountForLFSR = 0
 	}
 	a.nr44 = val
 }

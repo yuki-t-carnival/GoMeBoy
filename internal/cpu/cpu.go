@@ -45,13 +45,12 @@ func (c *CPU) Step() int {
 
 	c.checkIRQ()
 
-	// During DMA transfer, only check for interrupts
 	if c.Bus.IsDMATransferInProgress {
 		c.Bus.DMATransfer()
 		return 4
 	}
 
-	// STOP is not implemented
+	// ***** STOP is not implemented *****
 	// Stop mode ends when any input is received
 	/* if c.IsStopped {
 		if c.Bus.Joypad.HasStateChanged {
@@ -61,7 +60,6 @@ func (c *CPU) Step() int {
 		}
 	} */
 
-	// HALT ends when any bit is set in IF
 	if c.isHalted {
 		if (c.read(bus.IF) & 0x1F) != 0 {
 			c.isHalted = false
@@ -78,7 +76,7 @@ func (c *CPU) Step() int {
 	op := c.fetchOpcode()
 	OpTable[op].fn(c)
 
-	// For EI
+	// For EI instruction.
 	if c.imeDelay > 0 {
 		c.imeDelay--
 		if c.imeDelay == 0 {
@@ -202,7 +200,6 @@ func (c *CPU) handleInterrupt() bool {
 		return false
 	}
 
-	// allowed interrupts == IME & IEbit & IFbit
 	curIE := c.read(bus.IE) & 0x1F
 	curIF := c.read(bus.IF) & 0x1F
 	pending := curIE & curIF
@@ -210,11 +207,10 @@ func (c *CPU) handleInterrupt() bool {
 		return false
 	}
 
-	// PC set to $40, $48, $50, $58, $60, if interrupts are enabled
 	for i := 0; i < 5; i++ {
 		if (pending & (1 << i)) != 0 {
-			c.write(bus.IF, curIF & ^(1<<i)) // Clear IF bit before the interrupt
-			c.isIMEEnabled = false           // Disable IME before the interrupt
+			c.write(bus.IF, curIF & ^(1<<i)) // Clear IF bit before the interrupt.
+			c.isIMEEnabled = false           // Disable IME before the interrupt.
 			c.push(c.pc)
 			c.pc = 0x40 + 0x08*uint16(i)
 			c.cycles += 20
@@ -225,15 +221,15 @@ func (c *CPU) handleInterrupt() bool {
 }
 
 func (c *CPU) checkIRQ() {
-	if c.Bus.PPU.HasVBlankIRQ {
+	if c.Bus.PPU.HasVBlankInterruptRequested {
 		newIF := c.read(bus.IF) | (1 << 0)
 		c.write(bus.IF, newIF)
-		c.Bus.PPU.HasVBlankIRQ = false
+		c.Bus.PPU.HasVBlankInterruptRequested = false
 	}
-	if c.Bus.PPU.HasSTATIRQ {
+	if c.Bus.PPU.HasLCDInterruptRequested {
 		newIF := c.read(bus.IF) | (1 << 1)
 		c.write(bus.IF, newIF)
-		c.Bus.PPU.HasSTATIRQ = false
+		c.Bus.PPU.HasLCDInterruptRequested = false
 	}
 	if c.Bus.Timer.HasIRQ {
 		newIF := c.read(bus.IF) | (1 << 2)

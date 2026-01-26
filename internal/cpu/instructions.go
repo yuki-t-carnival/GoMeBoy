@@ -51,7 +51,7 @@ func (c *CPU) opHALT() { // 76
 func (c *CPU) opPREFIX() { // CB
 	op := c.fetch()
 	CBTable[op].fn(c)
-	// c.cycles += 4 // Added by each CB prefixed instrs
+	// c.cycles += 4 // Added by each CB prefixed instrs.
 }
 
 // ----------------------------------- LD r16, n16 -----------------------------

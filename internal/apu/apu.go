@@ -7,12 +7,13 @@ import (
 	"time"
 )
 
-const SampleRate = 44100
-const CyclesPerSample = 4194304 / SampleRate
-const SampPerLenTimerTick = SampleRate / 256
-const SampPerEnvTick = SampleRate / 64
+const SampleRate float64 = 44100.0
+const CyclesPerSample float64 = 4194304.0 / SampleRate
+const SamplesPerLengthTimerTick float64 = SampleRate / 256.0
+const SamplesPerEnvelopeTick float64 = SampleRate / 64.0
+const SamplesPerSweepTick float64 = SampleRate / 128.0
 
-var b [4]byte // Declared here for optimization
+var b [8]byte // Declared here for optimization.
 
 type APU struct {
 	AudioStream *AudioStream
@@ -20,77 +21,94 @@ type APU struct {
 	cycles float64
 
 	// For debug
-	debugStrs              []string
-	timeOfDebugStrsCreated time.Time
+	debugStrings              []string
+	timeOfDebugStringsCreated time.Time
 
 	// Global control registers
-	nr52 byte // Audio master control
-	nr51 byte // Sound panning
-	nr50 byte // Master volume & VIN panning
+	nr52 byte
+	nr51 byte
+	nr50 byte
 
 	// Sound channel 1
-	nr10                  byte // Channel 1 sweep (not implemented)
-	nr11                  byte // Channel 1 length timer & duty cycle
-	nr12                  byte // Channel 1 volume & envelope
-	nr13                  byte // Channel 1 period low [write-only]
-	nr14                  byte // Channel 1 period high & control
-	ch1Vol                byte
-	ch1SampCntForLenTimer int
-	ch1SampCntForEnv      int
-	ch1LenTimer           int
-	ch1Phase              float64
+	nr10                         byte
+	nr11                         byte
+	nr12                         byte
+	nr13                         byte
+	nr14                         byte
+	ch1Vol                       byte
+	ch1SampleCountForLengthTimer float64
+	ch1SampleCountForEnvelope    float64
+	ch1LengthTimer               int
+	ch1Phase                     float64
+	ch1SampleCountForSweep       float64
+	ch1Period                    uint16
 
 	// Sound channel 2
-	nr21                  byte // Channel 2 length timer & duty cycle
-	nr22                  byte // Channel 2 volume & envelope
-	nr23                  byte // Channel 2 period low [write-only]
-	nr24                  byte // Channel 2 period high & control
-	ch2Vol                byte
-	ch2SampCntForLenTimer int
-	ch2SampCntForEnv      int
-	ch2LenTimer           int
-	ch2Phase              float64
+	nr21                         byte
+	nr22                         byte
+	nr23                         byte
+	nr24                         byte
+	ch2Vol                       byte
+	ch2SampleCountForLengthTimer float64
+	ch2SampleCountForEnvelope    float64
+	ch2LengthTimer               int
+	ch2Phase                     float64
+	ch2Period                    uint16
 
 	// Sound channel 3
-	waveRAM               [16]byte
-	nr30                  byte // Channel 3 DAC Enable
-	nr31                  byte // Channel 3 length timer & duty cycle
-	nr32                  byte // Channel 3 Output level
-	nr33                  byte // Channel 3 period low [write-only]
-	nr34                  byte // Channel 3 period high & control
-	ch3SampCntForLenTimer int
-	ch3LenTimer           int
-	ch3Phase              float64
-	idxWavRAM             int
+	waveRAM                      [16]byte
+	nr30                         byte
+	nr31                         byte
+	nr32                         byte
+	nr33                         byte
+	nr34                         byte
+	ch3SampleCountForLengthTimer float64
+	ch3LengthTimer               int
+	ch3Phase                     float64
+	indexWaveRAM                 int
 
 	// Sound channel 4
-	nr41                  byte // Channel 4 length timer [write-only]
-	nr42                  byte // Channel 4 volume & envelope
-	nr43                  byte // Channel 4 freqency & randomness
-	nr44                  byte // Channel 4 control
-	ch4Vol                byte
-	ch4SampCntForLenTimer int
-	ch4SampCntForEnv      int
-	ch4SampCntForLFSR     int
-	ch4LenTimer           int
-	lfsr                  uint16
+	nr41                         byte
+	nr42                         byte
+	nr43                         byte
+	nr44                         byte
+	ch4Vol                       byte
+	ch4SampleCountForLengthTimer float64
+	ch4SampleCountForEnvelope    float64
+	ch4SampleCountForLFSR        float64
+	ch4LengthTimer               int
+	lfsr                         uint16
+
+	distanceThreshold    int
+	samplingAcceleration float64
 }
 
-// ************************************ Public functions *******************************************
-
 func NewAPU() *APU {
-	bufMilliSecond := 100
-	bufSize := SampleRate * 4 * bufMilliSecond / 1000
-
+	bufferMilliSecond := float64(120)
+	bufferSize := int(SampleRate * 8 * bufferMilliSecond / 1000)
 	a := &APU{
-		AudioStream: NewAudioStream(bufSize),
-		lfsr:        0x7FFF,
+		AudioStream:          NewAudioStream(bufferSize),
+		lfsr:                 0x7FFF,
+		samplingAcceleration: 1.0,
 	}
+
+	a.distanceThreshold = int(float64(len(a.AudioStream.buffer)) * 0.40)
 	return a
 }
 
+// The Step adjusts the sampling interval depending on the current buffer size.
 func (a *APU) Step(cpuCycles int) {
-	a.cycles += float64(cpuCycles)
+	targetAcceleration := 1.0
+	w := a.AudioStream.w
+	r := a.AudioStream.r
+	t := a.distanceThreshold
+	if w-r < -t {
+		targetAcceleration = 1.5
+	} else if w-r > t {
+		targetAcceleration = 0.5
+	}
+	a.samplingAcceleration += (targetAcceleration - a.samplingAcceleration) * 0.01
+	a.cycles += float64(cpuCycles) * a.samplingAcceleration
 	for a.cycles >= CyclesPerSample {
 		a.cycles -= CyclesPerSample
 		b := a.generateSample()
@@ -107,28 +125,21 @@ func (a *APU) WriteWaveRAM(addr uint16, val byte) {
 }
 
 func (a *APU) GetAPUInfo() []string {
-	if time.Since(a.timeOfDebugStrsCreated).Milliseconds() >= 500 {
-		a.debugStrs = []string{}
-		a.debugStrs = append(a.debugStrs, "BUF STATUS")
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Stock buf:%6d/%6d", a.AudioStream.stock, len(a.AudioStream.buffer)))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Fill0 cnt:%d", a.AudioStream.fillZeroCnt))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Skip cnt:%d", a.AudioStream.skipCnt))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Read cnt:%d", a.AudioStream.readCnt))
-		a.debugStrs = append(a.debugStrs, fmt.Sprintf("Write cnt:%d", a.AudioStream.writeCnt))
-		a.timeOfDebugStrsCreated = time.Now()
+	if time.Since(a.timeOfDebugStringsCreated).Milliseconds() >= 500 {
+		a.debugStrings = []string{}
+		a.debugStrings = append(a.debugStrings, "BUF STATUS")
+		a.debugStrings = append(a.debugStrings, fmt.Sprintf("Stock buf:%6d/%6d", a.AudioStream.stock, len(a.AudioStream.buffer)))
+		a.timeOfDebugStringsCreated = time.Now()
 	}
-	return a.debugStrs
+	return a.debugStrings
 }
 
-// *********************************** Private functions *******************************************
-
-// =================================== Generate Sample =============================================
-func (a *APU) generateSample() [4]byte {
+func (a *APU) generateSample() [8]byte {
 	sr1, sl1 := a.generateSquareChannel(1)
 	sr2, sl2 := a.generateSquareChannel(2)
 	sr3, sl3 := a.generateWaveChannel()
 	sr4, sl4 := a.generateNoiseChannel()
-	/* sr1 = 0
+	/*sr1 = 0
 	sl1 = 0
 	sr2 = 0
 	sl2 = 0
@@ -136,59 +147,84 @@ func (a *APU) generateSample() [4]byte {
 	sl3 = 0
 	sr4 = 0
 	sl4 = 0 */
-	sr := (sr1 + sr2 + sr3 + sr4) / 4.0
-	sl := (sl1 + sl2 + sl3 + sl4) / 4.0
-	sampleR := int16(sr * 32767)
-	sampleL := int16(sl * 32767)
-	binary.LittleEndian.PutUint16(b[0:2], uint16(sampleL))
-	binary.LittleEndian.PutUint16(b[2:4], uint16(sampleR))
+	sampleR := float32((sr1 + sr2 + sr3 + sr4) / 4.0)
+	sampleL := float32((sl1 + sl2 + sl3 + sl4) / 4.0)
+	binary.LittleEndian.PutUint32(b[0:4], math.Float32bits(sampleL))
+	binary.LittleEndian.PutUint32(b[4:8], math.Float32bits(sampleR))
 	return b
 }
 
-// ======================================= Channel 1/2 =============================================
+// Channel 1 & 2.
 func (a *APU) generateSquareChannel(ch byte) (float64, float64) {
 	var nrX1 byte
 	var nrX2 byte
-	var nrX3 byte
+	//var nrX3 byte
 	var nrX4 byte
 	var chXPhase *float64
-	var chXSampCntForLenTimer *int
-	var chXLenTimer *int
-	var chXSampCntForEnv *int
+	var chXSampleCountForLengthTimer *float64
+	var chXLengthTimer *int
+	var chXSampleCountForEnvelope *float64
 	var chXVol *byte
+	var chXPeriod *uint16
 	switch ch {
 	case 1:
 		nrX1 = a.nr11
 		nrX2 = a.nr12
-		nrX3 = a.nr13
+		//nrX3 = a.nr13
 		nrX4 = a.nr14
 		chXPhase = &a.ch1Phase
-		chXSampCntForLenTimer = &a.ch1SampCntForLenTimer
-		chXLenTimer = &a.ch1LenTimer
-		chXSampCntForEnv = &a.ch1SampCntForEnv
+		chXSampleCountForLengthTimer = &a.ch1SampleCountForLengthTimer
+		chXLengthTimer = &a.ch1LengthTimer
+		chXSampleCountForEnvelope = &a.ch1SampleCountForEnvelope
 		chXVol = &a.ch1Vol
+		chXPeriod = &a.ch1Period
 	case 2:
 		nrX1 = a.nr21
 		nrX2 = a.nr22
-		nrX3 = a.nr23
+		//nrX3 = a.nr23
 		nrX4 = a.nr24
 		chXPhase = &a.ch2Phase
-		chXSampCntForLenTimer = &a.ch2SampCntForLenTimer
-		chXLenTimer = &a.ch2LenTimer
-		chXSampCntForEnv = &a.ch2SampCntForEnv
+		chXSampleCountForLengthTimer = &a.ch2SampleCountForLengthTimer
+		chXLengthTimer = &a.ch2LengthTimer
+		chXSampleCountForEnvelope = &a.ch2SampleCountForEnvelope
 		chXVol = &a.ch2Vol
+		chXPeriod = &a.ch2Period
 	default:
 		panic("")
 	}
 
-	period := (uint16(nrX4&0x07) << 8) | uint16(nrX3)
-	freq := 131072.0 / (2048.0 - float64(period))
-	*chXPhase += freq / float64(SampleRate)
+	// Sweep function is only available on Channel 1.
+	if ch == 1 {
+		pace := a.nr10 & 0x70 >> 4
+		if pace != 0 {
+			sweepItaration := SamplesPerSweepTick * float64(pace)
+			a.ch1SampleCountForSweep++
+			for a.ch1SampleCountForSweep >= sweepItaration {
+				a.ch1SampleCountForSweep -= sweepItaration
+				individualStep := int(a.nr10 & 0x07)
+				delta := int(*chXPeriod) >> individualStep
+				direction := a.nr10 & (1 << 3) >> 3
+				if direction == 1 {
+					delta = -delta
+				}
+				tmpPeriod := int(*chXPeriod) + delta
+				if tmpPeriod < 0 || tmpPeriod > 0x7FF {
+					a.nr52 = a.nr52 & 0xFE
+				} else {
+					*chXPeriod = uint16(tmpPeriod)
+				}
+			}
+		}
+	}
+
+	freqency := 131072.0 / (2048.0 - float64(*chXPeriod))
+	*chXPhase += freqency / float64(SampleRate)
 	for *chXPhase >= 1.0 {
 		*chXPhase -= 1.0
 	}
 	var dutyRatio float64
-	switch nrX1 >> 6 { // Duty cycle value(binary)
+	waveDuty := nrX1 >> 6
+	switch waveDuty {
 	case 0:
 		dutyRatio = 0.125
 	case 1:
@@ -199,150 +235,150 @@ func (a *APU) generateSquareChannel(ch byte) (float64, float64) {
 		dutyRatio = 0.75
 	}
 
-	a.execLengthTimer(ch, nrX4, chXLenTimer, chXSampCntForLenTimer)
-	a.execEnvelope(chXVol, nrX2, chXSampCntForEnv)
-	volR, volL := a.execMixing(ch, float64(*chXVol)/15.0)
+	a.execLengthTimer(ch, nrX4, chXLengthTimer, chXSampleCountForLengthTimer)
+	a.execEnvelope(chXVol, nrX2, chXSampleCountForEnvelope)
+	volumeR, volumeL := a.execMixing(ch, float64(*chXVol)/15.0)
 
 	var sampleR, sampleL float64
 	if *chXPhase < dutyRatio {
-		sampleR = +volR
-		sampleL = +volL
+		sampleR = +volumeR
+		sampleL = +volumeL
 	} else {
-		sampleR = -volR
-		sampleL = -volL
+		sampleR = -volumeR
+		sampleL = -volumeL
 	}
 	return sampleR, sampleL
 }
 
-// ===================================== Channel 3 =================================================
+// Channel 3.
 func (a *APU) generateWaveChannel() (float64, float64) {
-	period := (uint16(a.nr34&0x07) << 8) | uint16(a.nr33)
-	freq := (65536.0 / (2048.0 - float64(period))) * 32
+	period := uint16(a.nr34&0x07)<<8 | uint16(a.nr33)
+	freqency := (65536.0 / (2048.0 - float64(period))) * 32
 
-	a.ch3Phase += freq / float64(SampleRate)
+	a.ch3Phase += freqency / float64(SampleRate)
 	for a.ch3Phase >= 1.0 {
 		a.ch3Phase -= 1.0
-		a.idxWavRAM = (a.idxWavRAM + 1) % 32
+		a.indexWaveRAM = (a.indexWaveRAM + 1) % 32
 	}
 
 	// ram[0]hi, ram[0]lo, ram[1]hi...
-	wav := a.waveRAM[a.idxWavRAM/2]
-	if a.idxWavRAM%2 == 0 {
-		wav >>= 4
+	wave := a.waveRAM[a.indexWaveRAM/2]
+	if a.indexWaveRAM%2 == 0 {
+		wave >>= 4
 	} else {
-		wav &= 0x0F
+		wave &= 0x0F
 	}
 
-	// output level (=ch3 volume)
-	switch (a.nr32 & 0x60) >> 5 {
+	outputLevel := a.nr32 & 0x60 >> 5
+	switch outputLevel {
 	case 0:
-		wav = 0
+		wave = 0
 	case 2:
-		wav >>= 1
+		wave >>= 1
 	case 3:
-		wav >>= 2
+		wave >>= 2
 	}
 
-	a.execLengthTimer(3, a.nr34, &a.ch3LenTimer, &a.ch3SampCntForLenTimer)
-	volR, volL := a.execMixing(3, 1.0)
+	a.execLengthTimer(3, a.nr34, &a.ch3LengthTimer, &a.ch3SampleCountForLengthTimer)
+	volumeR, volumeL := a.execMixing(3, 1.0)
 
-	if a.nr30&0x80 == 0 { // DAC on/off (ch3 only)
-		volR = 0
-		volL = 0
+	isDACOn := a.nr30&0x80 != 0
+	if !isDACOn {
+		volumeR = 0
+		volumeL = 0
 	}
 
 	var sampleR, sampleL float64
-	sampleR = (float64(wav)/7.5 - 1.0) * volR // ram[x]hi/lo = 0~15 to 0~2 to -1~+1
-	sampleL = (float64(wav)/7.5 - 1.0) * volL // ram[x]hi/lo = 0~15 to 0~2 to -1~+1
+	sampleR = (float64(wave)/7.5 - 1.0) * volumeR // ram[x]hi/lo = 0~15 to -1~+1.
+	sampleL = (float64(wave)/7.5 - 1.0) * volumeL // ram[x]hi/lo = 0~15 to -1~+1.
 	return sampleR, sampleL
 }
 
-// ===================================== Channel 4 =================================================
+// Channel 4
 func (a *APU) generateNoiseChannel() (float64, float64) {
 	clockShift := float64(a.nr43 >> 4)
-	clockDivider := float64(a.nr43 & 0x03)
+	clockDivider := float64(a.nr43 & 0x07)
 	if clockDivider == 0 {
 		clockDivider = 0.5
 	}
-	lfsrWidth := (a.nr43 & (1 << 3)) >> 3 // 0: 15bit,   1: 7bit
-	a.ch4SampCntForLFSR++
-	// Set a min value for when LFSR clock > Sample rate
-	samplesPerLFSRClock := max(1, int(SampleRate/(262144.0/(clockDivider*math.Pow(2, clockShift)))))
-	for a.ch4SampCntForLFSR >= samplesPerLFSRClock {
-		a.ch4SampCntForLFSR -= samplesPerLFSRClock
-		xor := (a.lfsr & (1 << 0)) ^ ((a.lfsr & (1 << 1)) >> 1)
-		a.lfsr = (xor << 15) | (a.lfsr & 0x7FFF)
+	lfsrWidth := a.nr43 & (1 << 3) >> 3 // 0:15bit   1:7bit
+	a.ch4SampleCountForLFSR++
+	// Set a min value for when LFSR clock > Sample rate.
+	samplesPerLFSRClock := max(1.0, SampleRate/(262144.0/(clockDivider*math.Pow(2, clockShift))))
+	for a.ch4SampleCountForLFSR >= samplesPerLFSRClock {
+		a.ch4SampleCountForLFSR -= samplesPerLFSRClock
+		xor := a.lfsr&1 ^ a.lfsr&2>>1
+		a.lfsr = xor<<15 | a.lfsr&^(1<<15)
 		if lfsrWidth == 1 {
-			a.lfsr = (xor << 7) | (a.lfsr & 0xFF7F)
+			a.lfsr = xor<<7 | a.lfsr&^(1<<7)
 		}
 		a.lfsr >>= 1
 	}
 
-	a.execLengthTimer(4, a.nr44, &a.ch4LenTimer, &a.ch4SampCntForLenTimer)
-	a.execEnvelope(&a.ch4Vol, a.nr42, &a.ch4SampCntForEnv)
-	volR, volL := a.execMixing(4, float64(a.ch4Vol)/15.0)
+	a.execLengthTimer(4, a.nr44, &a.ch4LengthTimer, &a.ch4SampleCountForLengthTimer)
+	a.execEnvelope(&a.ch4Vol, a.nr42, &a.ch4SampleCountForEnvelope)
+	volumeR, volumeL := a.execMixing(4, float64(a.ch4Vol)/15.0)
 
 	var sampleR, sampleL float64
 	if a.lfsr&1 == 0 {
-		sampleR = +volR
-		sampleL = +volL
+		sampleR = +volumeR
+		sampleL = +volumeL
 	} else {
-		sampleR = -volR
-		sampleL = -volL
+		sampleR = -volumeR
+		sampleL = -volumeL
 	}
 	return sampleR, sampleL
 }
 
-// =========================================== Mixing ==============================================
-func (a *APU) execMixing(ch byte, chVol float64) (float64, float64) {
-	panR := float64((a.nr51 & (1 << (ch - 1))) >> (ch - 1)) // right 0 or 1
-	panL := float64((a.nr51 & (1 << (ch + 3))) >> (ch + 3)) // left 0 or 1
-	masterR := float64(a.nr50&0x07) / 7.0
-	masterL := float64((a.nr50&0x70)>>4) / 7.0
-	volR := panR * masterR * chVol
-	volL := panL * masterL * chVol
-	// NR52: Audio Master Control
-	if a.nr52&(1<<7) == 0 || a.nr52&(1<<(ch-1)) == 0 {
-		volR = 0
-		volL = 0
+func (a *APU) execMixing(ch byte, chVolume float64) (float64, float64) {
+	isAudioOn := a.nr52&(1<<7) != 0
+	isChannelOn := a.nr52&(1<<(ch-1)) != 0
+	if !isAudioOn || !isChannelOn {
+		return 0, 0
 	}
-	return volR, volL
+	panR := float64((a.nr51 & (1 << (ch - 1))) >> (ch - 1)) // 0 or 1
+	panL := float64((a.nr51 & (1 << (ch + 3))) >> (ch + 3)) // 0 or 1
+	masterR := float64(a.nr50&0x07) / 7.0
+	masterL := float64(a.nr50&0x70>>4) / 7.0
+	volumeR := panR * masterR * chVolume
+	volumeL := panL * masterL * chVolume
+	return volumeR, volumeL
 }
 
-// ======================================== Length Timer ===========================================
-func (a *APU) execLengthTimer(ch, ctrlReg byte, lenTimer, sampCounter *int) {
-	max := 64
+func (a *APU) execLengthTimer(ch, controlRegister byte, lengthTimer *int, sampleCounter *float64) {
+	maxLength := 64
 	if ch == 3 {
-		max = 256
+		maxLength = 256
 	}
-	if a.nr52&(1<<(ch-1)) != 0 && (ctrlReg&(1<<6) != 0) { // If chX is Enabled && Length timer is enabled
-		(*sampCounter)++
-		for *sampCounter >= int(SampPerLenTimerTick) { // Length timer tick up at 256Hz
-			*sampCounter -= int(SampPerLenTimerTick)
-			if *lenTimer == max { // If Length Timer is max value (CH1,2,4: 64,    CH3: 256)
-				a.nr52 &^= (1 << (ch - 1)) // Disable chX
+	isChannelOn := a.nr52&(1<<(ch-1)) != 0
+	isLengthEnabled := controlRegister&(1<<6) != 0
+	if isChannelOn && isLengthEnabled {
+		(*sampleCounter)++
+		for *sampleCounter >= SamplesPerLengthTimerTick {
+			*sampleCounter -= SamplesPerLengthTimerTick
+			if *lengthTimer == maxLength {
+				a.nr52 &^= 1 << (ch - 1) // Disable chX.
 			} else {
-				(*lenTimer)++
+				(*lengthTimer)++
 			}
 		}
 	}
 }
 
-// ========================================= Envelope ==============================================
-func (a *APU) execEnvelope(chVol *byte, envReg byte, sampCounter *int) {
-	envPeriod := envReg & 0x07
-	if envPeriod != 0 {
-		(*sampCounter)++
-		for *sampCounter >= SampPerEnvTick*int(envPeriod) { // tick up
-			*sampCounter -= SampPerEnvTick * int(envPeriod)
-			isEnvUp := envReg&(1<<3) != 0
-			if isEnvUp {
-				if *chVol < 15 {
-					(*chVol)++
+func (a *APU) execEnvelope(chVolume *byte, envelopeRegister byte, sampleCounter *float64) {
+	envelopePeriod := envelopeRegister & 0x07
+	if envelopePeriod != 0 {
+		(*sampleCounter)++
+		for *sampleCounter >= SamplesPerEnvelopeTick*float64(envelopePeriod) {
+			*sampleCounter -= SamplesPerEnvelopeTick * float64(envelopePeriod)
+			isEnvelopeDirectionUp := envelopeRegister&(1<<3) != 0
+			if isEnvelopeDirectionUp {
+				if *chVolume < 15 {
+					(*chVolume)++
 				}
-			} else { // Down
-				if *chVol > 0 {
-					(*chVol)--
+			} else {
+				if *chVolume > 0 {
+					(*chVolume)--
 				}
 			}
 		}

@@ -34,7 +34,7 @@ func (j *Joypad) Update() {
 	j.updateEbitenGamepadButtons()
 
 	// If any joypad input is detected,
-	// sets the IRQ and STOP cacel flags
+	// sets the IRQ and STOP cacel flags.
 	isKeysChanged := j.prevKeys&^j.keys != 0
 	isGamepadChanged := j.prevGamepad&^j.gamepad != 0
 	if isKeysChanged || isGamepadChanged {
@@ -44,7 +44,7 @@ func (j *Joypad) Update() {
 }
 
 // If select buttons/d-pad bit is 0,
-// then buttons/directional keys set to the lower nibble
+// then buttons/directional keys set to the lower nibble.
 func (j *Joypad) GetP1JOYP() byte {
 	isSelBtn := j.sel&(1<<5) == 0
 	isSelDpad := j.sel&(1<<4) == 0

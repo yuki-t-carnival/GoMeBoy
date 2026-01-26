@@ -8,7 +8,7 @@ const TraceSize = 256
 
 type Tracer struct {
 	buf   [TraceSize]TraceEntry
-	index int // of the next buffer to be used
+	index int // The index of the next buffer to use.
 }
 
 type TraceEntry struct {
@@ -24,7 +24,7 @@ func NewTracer(c *CPU) *Tracer {
 	return t
 }
 
-// Save the current CPU Registers state in a ring buffer
+// The Record Saves the current CPU Registers state in a ring buffer.
 func (t *Tracer) Record(c *CPU) {
 	op := uint16(c.read(c.pc))
 	var opName string
@@ -52,10 +52,10 @@ func (t *Tracer) Record(c *CPU) {
 	t.index = (t.index + 1) % TraceSize // ring buffer
 }
 
-// Output all CPU log buffers to console.
+// The Dump Outputs all CPU log buffers to console.
 func (t *Tracer) Dump() {
 	for i := range TraceSize {
-		idx := (t.index + i) % TraceSize // Output from the oldest dump
+		idx := (t.index + i) % TraceSize // Output from the oldest dump.
 		buf := t.buf[idx]
 		fmt.Printf(
 			"PC:%04X "+
@@ -79,7 +79,7 @@ func (t *Tracer) Dump() {
 	}
 }
 
-// Get CPU status strings for the debug screen
+// The GetCPUInfo Gets CPU status strings for the debug screen.
 func (t *Tracer) GetCPUInfo() []string {
 	var idx int
 	if t.index == 0 {
