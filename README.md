@@ -53,7 +53,6 @@ Edit the configuration file:
 
 - Tobu Tobu Girl
 - Sushi Nights GB
-- mattcurrie/dmg-acid2.gb
 - Blargg's test ROMs  
   - cpu_instrs.gb    
   - instr_timing.gb
